@@ -1,10 +1,10 @@
-// FAST Langton's Ant + smooth panning
+// === Langton's Ant with wrap-around, fixed grid, fixed UI ===
 let cols = 400, rows = 400;
 let grid;
 
-let cellSize = 20;
+let cellSize = 1;
 let zoom = 1;
-const minZoom = 0.2, maxZoom = 4;
+const minZoom = 0.2, maxZoom = 16;
 
 let offsetX = 0, offsetY = 0;
 let panning = false;
@@ -28,8 +28,10 @@ function setup() {
 
   canvas.oncontextmenu = () => false;
 
+  // slider below UI
   stepsPerFrameSlider = createSlider(1, 10000, 1000, 1);
-  stepsPerFrameSlider.position(12, 84);
+  stepsPerFrameSlider.position(20, 110);
+  stepsPerFrameSlider.style("width", "200px");
 }
 
 function initGrid() {
@@ -42,13 +44,11 @@ function initGrid() {
 function draw() {
   background(30);
 
-  // update step queue
   if (running) {
     pendingSteps += stepsPerFrameSlider.value();
   }
 
-  // simulate without freezing UI
-  let maxThisFrame = 5000; // throttle to protect draw loop
+  let maxThisFrame = 5000; 
   while (pendingSteps > 0 && maxThisFrame-- > 0) {
     stepAnt();
     pendingSteps--;
@@ -61,35 +61,39 @@ function draw() {
 
 function drawCells() {
   const cs = cellSize * zoom;
-  const xStart = max(0, floor((-offsetX) / cs));
-  const yStart = max(0, floor((-offsetY) / cs));
-  const xEnd   = min(cols-1, ceil((width-offsetX)/cs));
-  const yEnd   = min(rows-1, ceil((height-offsetY)/cs));
 
+  // Draw all alive cells
   noStroke();
-  for (let x=xStart; x<=xEnd; x++) {
-    for (let y=yStart; y<=yEnd; y++) {
+  for (let x = 0; x < cols; x++) {
+    for (let y = 0; y < rows; y++) {
       if (grid[x][y]) {
         fill(0);
-        rect(x*cs+offsetX, y*cs+offsetY, cs, cs);
+        rect(x*cs + offsetX, y*cs + offsetY, cs, cs);
       }
     }
   }
 
+  // Grid lines (optional, only when zoomed in enough)
   if (cs >= 6) {
-    stroke(70);
-    for (let x=xStart; x<=xEnd+1; x++)
-      line(x*cs+offsetX,yStart*cs+offsetY,x*cs+offsetX,(yEnd+1)*cs+offsetY);
-    for (let y=yStart; y<=yEnd+1; y++)
-      line(xStart*cs+offsetX,y*cs+offsetY,(xEnd+1)*cs+offsetX,y*cs+offsetY);
+    stroke(16);
+    for (let x = 0; x <= cols; x++)
+      line(x*cs+offsetX,0+offsetY,x*cs+offsetX,rows*cs+offsetY);
+    for (let y = 0; y <= rows; y++)
+      line(0+offsetX,y*cs+offsetY,cols*cs+offsetX,y*cs+offsetY);
   }
+
+  // Draw a border rectangle around the grid
+  stroke(255, 150); // white border, semi-transparent
+  strokeWeight(2);
+  noFill();
+  rect(offsetX, offsetY, cols*cs, rows*cs);
 }
 
 function drawAnt() {
   const cs = cellSize * zoom;
   fill(255,50,50);
   noStroke();
-  rect(antX*cs+offsetX, antY*cs+offsetY, cs, cs);
+  rect(antX*cs + offsetX, antY*cs + offsetY, cs, cs);
 }
 
 function stepAnt() {
@@ -106,20 +110,23 @@ function stepAnt() {
   else if (antDir === 2) antY++;
   else antX--;
 
-  if (antX<0||antX>=cols||antY<0||antY>=rows) running=false;
+  // wrap around
+  antX = (antX + cols) % cols;
+  antY = (antY + rows) % rows;
 }
 
 function drawUI() {
+  push();
   fill(255,200);
   noStroke();
-  rect(6,6,350,110,6);
+  rect(25,25,360,90,6);
   fill(10);
   textSize(14);
-  text(`Langton's Ant (FAST)
-Steps/frame: ${stepsPerFrameSlider.value()}
-Queued steps: ${pendingSteps}
-${running?"(Space to pause)":"(Space to run)"}
-Right drag = Pan | Scroll = Zoom | Left = Toggle`, 12, 12);
+  text(`Langton's Ant (Wrap-around)
+Steps/frame: ${stepsPerFrameSlider.value()}  Queued: ${pendingSteps}
+Right drag: pan | Scroll: zoom | Left click: toggle
+Space: ${running ? "Pause" : "Run"} | C: Clear`, 40, 50);
+  pop();
 }
 
 function mousePressed() {
@@ -127,9 +134,7 @@ function mousePressed() {
     panning = true;
     lastMouseX = mouseX;
     lastMouseY = mouseY;
-  } else if (mouseButton === LEFT) {
-    toggleCell();
-  }
+  } else if (mouseButton === LEFT) toggleCell();
 }
 
 function mouseDragged() {
@@ -147,16 +152,14 @@ function toggleCell() {
   const cs = cellSize * zoom;
   const gx = floor((mouseX - offsetX) / cs);
   const gy = floor((mouseY - offsetY) / cs);
-  if (gx>=0&&gx<cols&&gy>=0&&gy<rows) {
-    grid[gx][gy] ^= 1;
-  }
+  if (gx >= 0 && gx < cols && gy >= 0 && gy < rows) grid[gx][gy] ^= 1;
 }
 
 function mouseWheel(e) {
   const old = zoom;
   zoom = constrain(zoom * (1 - e.deltaY * 0.0015), minZoom, maxZoom);
-  offsetX -= (mouseX-offsetX) * (zoom/old - 1);
-  offsetY -= (mouseY-offsetY) * (zoom/old - 1);
+  offsetX -= (mouseX-offsetX)*(zoom/old-1);
+  offsetY -= (mouseY-offsetY)*(zoom/old-1);
   return false;
 }
 
