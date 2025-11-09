@@ -1,10 +1,9 @@
-// === Langton's Ant with wrap-around, fixed grid, fixed UI ===
+// === Langton's Ant with grid + graphics buffer (fast) ===
 let cols = 400, rows = 400;
 let grid;
-
-let cellSize = 1;
+let cellSize = 20;
 let zoom = 1;
-const minZoom = 0.2, maxZoom = 16;
+const minZoom = 0.2, maxZoom = 4;
 
 let offsetX = 0, offsetY = 0;
 let panning = false;
@@ -16,8 +15,11 @@ let antX, antY, antDir = 0;
 let stepsPerFrameSlider;
 let pendingSteps = 0;
 
+let cellBuffer; // offscreen buffer for alive cells
+
 function setup() {
   createCanvas(windowWidth, windowHeight);
+  noSmooth();
   document.body.style.margin = 0;
   document.body.style.overflow = "hidden";
 
@@ -28,10 +30,17 @@ function setup() {
 
   canvas.oncontextmenu = () => false;
 
-  // slider below UI
+  // slider
   stepsPerFrameSlider = createSlider(1, 10000, 1000, 1);
   stepsPerFrameSlider.position(20, 110);
   stepsPerFrameSlider.style("width", "200px");
+
+  // create offscreen buffer
+  cellBuffer = createGraphics(cols, rows);
+  cellBuffer.noStroke();
+  cellBuffer.clear();
+  cellBuffer.noSmooth();
+  updateBuffer();
 }
 
 function initGrid() {
@@ -41,14 +50,23 @@ function initGrid() {
   antDir = 0;
 }
 
+function updateBuffer() {
+  // cellBuffer.background(255); // white background
+  cellBuffer.clear();
+  cellBuffer.fill(0);         // alive cells black
+  for (let x = 0; x < cols; x++) {
+    for (let y = 0; y < rows; y++) {
+      if (grid[x][y]) cellBuffer.rect(x, y, 1, 1);
+    }
+  }
+}
+
 function draw() {
   background(30);
 
-  if (running) {
-    pendingSteps += stepsPerFrameSlider.value();
-  }
+  if (running) pendingSteps += stepsPerFrameSlider.value();
 
-  let maxThisFrame = 5000; 
+  let maxThisFrame = 5000;
   while (pendingSteps > 0 && maxThisFrame-- > 0) {
     stepAnt();
     pendingSteps--;
@@ -60,33 +78,19 @@ function draw() {
 }
 
 function drawCells() {
-  const cs = cellSize * zoom;
+  push();
+  scale(zoom);
+  translate(offsetX/zoom, offsetY/zoom);
 
-  // Draw all alive cells
-  noStroke();
-  for (let x = 0; x < cols; x++) {
-    for (let y = 0; y < rows; y++) {
-      if (grid[x][y]) {
-        fill(0);
-        rect(x*cs + offsetX, y*cs + offsetY, cs, cs);
-      }
-    }
-  }
+  // draw alive cells from buffer
+  image(cellBuffer, 0, 0, cols*cellSize, rows*cellSize);
 
-  // Grid lines (optional, only when zoomed in enough)
-  if (cs >= 6) {
-    stroke(16);
-    for (let x = 0; x <= cols; x++)
-      line(x*cs+offsetX,0+offsetY,x*cs+offsetX,rows*cs+offsetY);
-    for (let y = 0; y <= rows; y++)
-      line(0+offsetX,y*cs+offsetY,cols*cs+offsetX,y*cs+offsetY);
-  }
-
-  // Draw a border rectangle around the grid
-  stroke(255, 150); // white border, semi-transparent
-  strokeWeight(2);
+  // draw border
+  stroke(255,150);
+  strokeWeight(2/zoom);
   noFill();
-  rect(offsetX, offsetY, cols*cs, rows*cs);
+  rect(0, 0, cols*cellSize, rows*cellSize);
+  pop();
 }
 
 function drawAnt() {
@@ -97,20 +101,30 @@ function drawAnt() {
 }
 
 function stepAnt() {
-  if (grid[antX][antY] === 0) {
-    antDir = (antDir + 1) % 4;
-    grid[antX][antY] = 1;
+  // store current position BEFORE change
+  let oldX = antX;
+  let oldY = antY;
+
+  // flip current cell
+  grid[oldX][oldY] = 1 - grid[oldX][oldY];
+
+  // update buffer for that flipped cell
+  cellBuffer.fill(grid[oldX][oldY] ? 0 : 255);
+  cellBuffer.rect(oldX, oldY, 1, 1);
+
+  // turn based on new state
+  if (grid[oldX][oldY] === 1) {
+    antDir = (antDir + 1) % 4; // black -> right
   } else {
-    antDir = (antDir + 3) % 4;
-    grid[antX][antY] = 0;
+    antDir = (antDir + 3) % 4; // white -> left
   }
 
   if (antDir === 0) antY--;
   else if (antDir === 1) antX++;
   else if (antDir === 2) antY++;
-  else antX--;
+  else if (antDir === 3) antX--;
 
-  // wrap around
+  // wrap
   antX = (antX + cols) % cols;
   antY = (antY + rows) % rows;
 }
@@ -119,13 +133,13 @@ function drawUI() {
   push();
   fill(255,200);
   noStroke();
-  rect(25,25,360,90,6);
+  rect(12,12,360,90,6);
   fill(10);
   textSize(14);
-  text(`Langton's Ant (Wrap-around)
+  text(`Langton's Ant (Fast Grid + Buffer)
 Steps/frame: ${stepsPerFrameSlider.value()}  Queued: ${pendingSteps}
 Right drag: pan | Scroll: zoom | Left click: toggle
-Space: ${running ? "Pause" : "Run"} | C: Clear`, 40, 50);
+Space: ${running ? "Pause" : "Run"} | C: Clear`, 20, 20);
   pop();
 }
 
@@ -149,10 +163,14 @@ function mouseDragged() {
 function mouseReleased() { panning = false; }
 
 function toggleCell() {
-  const cs = cellSize * zoom;
-  const gx = floor((mouseX - offsetX) / cs);
-  const gy = floor((mouseY - offsetY) / cs);
-  if (gx >= 0 && gx < cols && gy >= 0 && gy < rows) grid[gx][gy] ^= 1;
+  const cs = cellSize;
+  const gx = floor((mouseX - offsetX) / (cs*zoom));
+  const gy = floor((mouseY - offsetY) / (cs*zoom));
+  if (gx >= 0 && gx < cols && gy >= 0 && gy < rows) {
+    grid[gx][gy] = grid[gx][gy] ? 0 : 1;
+    cellBuffer.fill(grid[gx][gy] ? 0 : 255);
+    cellBuffer.rect(gx, gy, 1, 1);
+  }
 }
 
 function mouseWheel(e) {
@@ -165,7 +183,12 @@ function mouseWheel(e) {
 
 function keyPressed() {
   if (key === " ") running = !running;
-  if (key === "C" || key === "c") initGrid();
+  if (key === "C" || key === "c") {
+    initGrid();
+    updateBuffer();
+  }
 }
 
-function windowResized() { resizeCanvas(windowWidth, windowHeight); }
+function windowResized() { 
+  resizeCanvas(windowWidth, windowHeight);
+}
