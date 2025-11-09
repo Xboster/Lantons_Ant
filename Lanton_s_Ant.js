@@ -1,48 +1,35 @@
-// ✅ p5.5.js Langton’s Ant — fast, responsive, UI controlled
-
-// Set screen requirements + export resolution (in PPI)
-p5.initMetrics(16, 300);
-
+// FAST Langton's Ant + smooth panning
 let cols = 400, rows = 400;
 let grid;
 
-let cellSize = 10; // logical size — p5.5 scales it
-let antX, antY, antDir;
+let cellSize = 20;
+let zoom = 1;
+const minZoom = 0.2, maxZoom = 4;
+
+let offsetX = 0, offsetY = 0;
+let panning = false;
+let lastMouseX = 0, lastMouseY = 0;
 
 let running = false;
-let queuedSteps = 0;
+let antX, antY, antDir = 0;
 
-let params = {
-  stepsPerFrame: 500,
-  reset: () => initGrid(),
-  run: () => running = true,
-  pause: () => running = false,
-  step: () => { queuedSteps += params.stepsPerFrame; }
-};
+let stepsPerFrameSlider;
+let pendingSteps = 0;
 
 function setup() {
-  createCanvas(cols * cellSize, rows * cellSize, {
-    zoomMin: 0.1,
-    zoomMax: 50,
-    zoomInc: 0.05,
-    guiOpen: true,
-    guiTheme: "dark",
-    cmdFullScreenToggle: "Shift+F",
-    loop: true,
-    panButtons: [RIGHT]
-  });
+  createCanvas(windowWidth, windowHeight);
+  document.body.style.margin = 0;
+  document.body.style.overflow = "hidden";
 
   initGrid();
 
-  // GUI setup
-  let gui = addGUI("Langton’s Ant");
-  gui.add(params, "stepsPerFrame", 1, 5000, 1).name("Steps Per Frame");
-  gui.add(params, "step").name("Single Step");
-  gui.add(params, "run").name("Run");
-  gui.add(params, "pause").name("Pause");
-  gui.add(params, "reset").name("Reset");
+  offsetX = -(cols*cellSize*zoom)/2 + width/2;
+  offsetY = -(rows*cellSize*zoom)/2 + height/2;
 
-  noSmooth();
+  canvas.oncontextmenu = () => false;
+
+  stepsPerFrameSlider = createSlider(1, 10000, 1000, 1);
+  stepsPerFrameSlider.position(12, 84);
 }
 
 function initGrid() {
@@ -53,67 +40,129 @@ function initGrid() {
 }
 
 function draw() {
-  background(240); // p5.5 wallpaper still visible outside canvas
+  background(30);
 
-  // simulation update loop
-  if (running) queuedSteps += params.stepsPerFrame;
-
-  let maxThisFrame = 10000;
-  while (queuedSteps > 0 && maxThisFrame-- > 0) {
-    stepAnt();
-    queuedSteps--;
+  // update step queue
+  if (running) {
+    pendingSteps += stepsPerFrameSlider.value();
   }
 
-  // draw only visible region (p5.5 handles screen culling internally)
+  // simulate without freezing UI
+  let maxThisFrame = 5000; // throttle to protect draw loop
+  while (pendingSteps > 0 && maxThisFrame-- > 0) {
+    stepAnt();
+    pendingSteps--;
+  }
+
+  drawCells();
+  drawAnt();
+  drawUI();
+}
+
+function drawCells() {
+  const cs = cellSize * zoom;
+  const xStart = max(0, floor((-offsetX) / cs));
+  const yStart = max(0, floor((-offsetY) / cs));
+  const xEnd   = min(cols-1, ceil((width-offsetX)/cs));
+  const yEnd   = min(rows-1, ceil((height-offsetY)/cs));
+
   noStroke();
-  fill(0);
-  for (let x = 0; x < cols; x++) {
-    for (let y = 0; y < rows; y++) {
+  for (let x=xStart; x<=xEnd; x++) {
+    for (let y=yStart; y<=yEnd; y++) {
       if (grid[x][y]) {
-        rect(x * cellSize, y * cellSize, cellSize, cellSize);
+        fill(0);
+        rect(x*cs+offsetX, y*cs+offsetY, cs, cs);
       }
     }
   }
 
-  // draw ant
-  fill(255, 50, 50);
-  rect(antX * cellSize, antY * cellSize, cellSize, cellSize);
+  if (cs >= 6) {
+    stroke(70);
+    for (let x=xStart; x<=xEnd+1; x++)
+      line(x*cs+offsetX,yStart*cs+offsetY,x*cs+offsetX,(yEnd+1)*cs+offsetY);
+    for (let y=yStart; y<=yEnd+1; y++)
+      line(xStart*cs+offsetX,y*cs+offsetY,(xEnd+1)*cs+offsetX,y*cs+offsetY);
+  }
+}
+
+function drawAnt() {
+  const cs = cellSize * zoom;
+  fill(255,50,50);
+  noStroke();
+  rect(antX*cs+offsetX, antY*cs+offsetY, cs, cs);
 }
 
 function stepAnt() {
-  const cell = grid[antX][antY];
-
-  // white → turn right, black → turn left
-  antDir = (antDir + (cell === 0 ? 1 : 3)) % 4;
-  grid[antX][antY] = 1 - cell;
+  if (grid[antX][antY] === 0) {
+    antDir = (antDir + 1) % 4;
+    grid[antX][antY] = 1;
+  } else {
+    antDir = (antDir + 3) % 4;
+    grid[antX][antY] = 0;
+  }
 
   if (antDir === 0) antY--;
   else if (antDir === 1) antX++;
   else if (antDir === 2) antY++;
   else antX--;
 
-  // Wrap around instead of freezing UI ✅
-  antX = (antX + cols) % cols;
-  antY = (antY + rows) % rows;
+  if (antX<0||antX>=cols||antY<0||antY>=rows) running=false;
+}
+
+function drawUI() {
+  fill(255,200);
+  noStroke();
+  rect(6,6,350,110,6);
+  fill(10);
+  textSize(14);
+  text(`Langton's Ant (FAST)
+Steps/frame: ${stepsPerFrameSlider.value()}
+Queued steps: ${pendingSteps}
+${running?"(Space to pause)":"(Space to run)"}
+Right drag = Pan | Scroll = Zoom | Left = Toggle`, 12, 12);
 }
 
 function mousePressed() {
-  if (mouseButton !== LEFT) return;
-
-  // Convert screen → canvas coordinates
-  const cx = convertFromScreenX(mouseX);
-  const cy = convertFromScreenY(mouseY);
-
-  // Ensure within canvas
-  if (cx < 0 || cy < 0 || cx >= width || cy >= height) return;
-
-  // Convert to grid coords
-  const gx = floor(cx / cellSize);
-  const gy = floor(cy / cellSize);
-
-  grid[gx][gy] ^= 1; // Toggle
+  if (mouseButton === RIGHT || mouseButton === CENTER) {
+    panning = true;
+    lastMouseX = mouseX;
+    lastMouseY = mouseY;
+  } else if (mouseButton === LEFT) {
+    toggleCell();
+  }
 }
 
 function mouseDragged() {
-  if (mouseButton === LEFT) mousePressed();
+  if (panning) {
+    offsetX += mouseX - lastMouseX;
+    offsetY += mouseY - lastMouseY;
+    lastMouseX = mouseX;
+    lastMouseY = mouseY;
+  }
 }
+
+function mouseReleased() { panning = false; }
+
+function toggleCell() {
+  const cs = cellSize * zoom;
+  const gx = floor((mouseX - offsetX) / cs);
+  const gy = floor((mouseY - offsetY) / cs);
+  if (gx>=0&&gx<cols&&gy>=0&&gy<rows) {
+    grid[gx][gy] ^= 1;
+  }
+}
+
+function mouseWheel(e) {
+  const old = zoom;
+  zoom = constrain(zoom * (1 - e.deltaY * 0.0015), minZoom, maxZoom);
+  offsetX -= (mouseX-offsetX) * (zoom/old - 1);
+  offsetY -= (mouseY-offsetY) * (zoom/old - 1);
+  return false;
+}
+
+function keyPressed() {
+  if (key === " ") running = !running;
+  if (key === "C" || key === "c") initGrid();
+}
+
+function windowResized() { resizeCanvas(windowWidth, windowHeight); }
