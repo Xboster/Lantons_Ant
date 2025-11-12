@@ -1,5 +1,5 @@
-// === Langton's Ant with grid + graphics buffer (fast) ===
-let cols = 400, rows = 400;
+ // === Langton's Ant with grid + graphics buffer (fast) ===
+let cols = 999, rows = 999;
 let grid;
 let cellSize = 20;
 let zoom = 1;
@@ -101,7 +101,6 @@ function drawAnt() {
 }
 
 function stepAnt() {
-  // store current position BEFORE change
   let oldX = antX;
   let oldY = antY;
 
@@ -109,16 +108,21 @@ function stepAnt() {
   grid[oldX][oldY] = 1 - grid[oldX][oldY];
 
   // update buffer for that flipped cell
-  cellBuffer.fill(grid[oldX][oldY] ? 0 : 255);
-  cellBuffer.rect(oldX, oldY, 1, 1);
-
-  // turn based on new state
-  if (grid[oldX][oldY] === 1) {
-    antDir = (antDir + 1) % 4; // black -> right
+  if (grid[oldX][oldY]) {
+    cellBuffer.fill(0);
+    cellBuffer.noStroke();
+    cellBuffer.rect(oldX, oldY, 1, 1);
   } else {
-    antDir = (antDir + 3) % 4; // white -> left
+    cellBuffer.erase();           // make transparent
+    cellBuffer.rect(oldX, oldY, 1, 1);
+    cellBuffer.noErase();
   }
 
+  // turn based on new state
+  if (grid[oldX][oldY] === 1) antDir = (antDir + 1) % 4; // black -> right
+  else antDir = (antDir + 3) % 4;                        // white -> left
+
+  // move forward
   if (antDir === 0) antY--;
   else if (antDir === 1) antX++;
   else if (antDir === 2) antY++;
@@ -167,9 +171,17 @@ function toggleCell() {
   const gx = floor((mouseX - offsetX) / (cs*zoom));
   const gy = floor((mouseY - offsetY) / (cs*zoom));
   if (gx >= 0 && gx < cols && gy >= 0 && gy < rows) {
-    grid[gx][gy] = grid[gx][gy] ? 0 : 1;
-    cellBuffer.fill(grid[gx][gy] ? 0 : 255);
-    cellBuffer.rect(gx, gy, 1, 1);
+    grid[gx][gy] = 1 - grid[gx][gy];
+
+    if (grid[gx][gy]) {
+      cellBuffer.fill(0);
+      cellBuffer.noStroke();
+      cellBuffer.rect(gx, gy, 1, 1);
+    } else {
+      cellBuffer.erase();
+      cellBuffer.rect(gx, gy, 1, 1);
+      cellBuffer.noErase();
+    }
   }
 }
 
