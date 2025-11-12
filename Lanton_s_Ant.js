@@ -1,9 +1,8 @@
- // === Langton's Ant with grid + graphics buffer (fast) ===
-let cols = 999, rows = 999;
+let cols = 8192, rows = 8192;
 let grid;
-let cellSize = 20;
+let cellSize = 1;
 let zoom = 1;
-const minZoom = 0.2, maxZoom = 4;
+const minZoom = 0.2, maxZoom = 8;
 
 let offsetX = 0, offsetY = 0;
 let panning = false;
@@ -25,17 +24,17 @@ function setup() {
 
   initGrid();
 
-  offsetX = -(cols*cellSize*zoom)/2 + width/2;
-  offsetY = -(rows*cellSize*zoom)/2 + height/2;
+  offsetX = -(cols * cellSize * zoom) / 2 + width / 2;
+  offsetY = -(rows * cellSize * zoom) / 2 + height / 2;
 
   canvas.oncontextmenu = () => false;
 
-  // slider
+  // Slider
   stepsPerFrameSlider = createSlider(1, 10000, 1000, 1);
   stepsPerFrameSlider.position(20, 110);
   stepsPerFrameSlider.style("width", "200px");
 
-  // create offscreen buffer
+  // Offscreen buffer (1 px per cell)
   cellBuffer = createGraphics(cols, rows);
   cellBuffer.noStroke();
   cellBuffer.clear();
@@ -80,24 +79,24 @@ function draw() {
 function drawCells() {
   push();
   scale(zoom);
-  translate(offsetX/zoom, offsetY/zoom);
+  translate(offsetX / zoom, offsetY / zoom);
 
   // draw alive cells from buffer
-  image(cellBuffer, 0, 0, cols*cellSize, rows*cellSize);
+  image(cellBuffer, 0, 0, cols * cellSize, rows * cellSize);
 
   // draw border
-  stroke(255,150);
-  strokeWeight(2/zoom);
+  stroke(255, 150);
+  strokeWeight(2 / zoom);
   noFill();
-  rect(0, 0, cols*cellSize, rows*cellSize);
+  rect(0, 0, cols * cellSize, rows * cellSize);
   pop();
 }
 
 function drawAnt() {
   const cs = cellSize * zoom;
-  fill(255,50,50);
+  fill(255, 50, 50);
   noStroke();
-  rect(antX*cs + offsetX, antY*cs + offsetY, cs, cs);
+  rect(antX * cs + offsetX, antY * cs + offsetY, cs, cs);
 }
 
 function stepAnt() {
@@ -135,9 +134,9 @@ function stepAnt() {
 
 function drawUI() {
   push();
-  fill(255,200);
+  fill(255, 200);
   noStroke();
-  rect(12,12,360,90,6);
+  rect(12, 12, 360, 90, 6);
   fill(10);
   textSize(14);
   text(`Langton's Ant (Fast Grid + Buffer)
@@ -168,8 +167,8 @@ function mouseReleased() { panning = false; }
 
 function toggleCell() {
   const cs = cellSize;
-  const gx = floor((mouseX - offsetX) / (cs*zoom));
-  const gy = floor((mouseY - offsetY) / (cs*zoom));
+  const gx = floor((mouseX - offsetX) / (cs * zoom));
+  const gy = floor((mouseY - offsetY) / (cs * zoom));
   if (gx >= 0 && gx < cols && gy >= 0 && gy < rows) {
     grid[gx][gy] = 1 - grid[gx][gy];
 
@@ -188,8 +187,8 @@ function toggleCell() {
 function mouseWheel(e) {
   const old = zoom;
   zoom = constrain(zoom * (1 - e.deltaY * 0.0015), minZoom, maxZoom);
-  offsetX -= (mouseX-offsetX)*(zoom/old-1);
-  offsetY -= (mouseY-offsetY)*(zoom/old-1);
+  offsetX -= (mouseX - offsetX) * (zoom / old - 1);
+  offsetY -= (mouseY - offsetY) * (zoom / old - 1);
   return false;
 }
 
@@ -201,6 +200,6 @@ function keyPressed() {
   }
 }
 
-function windowResized() { 
+function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
 }
