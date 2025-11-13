@@ -19,7 +19,7 @@ let cellBuffer; // offscreen buffer for alive cells
 let gui;
 let settings = {
   running: false,
-  stepsPerFrame: 1000,
+  stepsPerFrame: 1,
   stepsLinear: Math.log10(1000) / Math.log10(10000),
   get stepsDisplay() { return this.stepsPerFrame; },
   reset: () => {
