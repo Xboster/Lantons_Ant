@@ -4,7 +4,7 @@
 let cols = 8192, rows = 8192;
 let grid;
 let cellSize = 64;
-let zoom = .2;
+let zoom = 0.2;
 const minZoom = 0.001, maxZoom = 1;
 
 let offsetX = 0, offsetY = 0;
@@ -14,7 +14,10 @@ let lastMouseX = 0, lastMouseY = 0;
 let antX, antY, antDir = 0;
 let pendingSteps = 0;
 
-let cellBuffer; // offscreen buffer for alive cells
+let tiles = [];
+const tileSize = 256; // tile in grid cells
+let numTilesX = Math.ceil(cols / tileSize);
+let numTilesY = Math.ceil(rows / tileSize);
 
 let gui;
 let settings = {
@@ -24,11 +27,57 @@ let settings = {
   get stepsDisplay() { return this.stepsPerFrame; },
   reset: () => {
     initGrid();
-    updateBuffer();
+    tiles.forEach(row => row.forEach(tile => tile.dirty = true));
     settings.running = false;
     settings._controllers.runningController.updateDisplay();
   }
 };
+
+// =====================
+// Tile Class
+// =====================
+class Tile {
+  constructor(x, y, size) {
+    this.x = x; // tile coordinates in grid
+    this.y = y;
+    this.size = size; // size in cells
+    this.graphics = createGraphics(size, size);
+    this.graphics.noStroke();
+    this.dirty = true;
+  }
+
+  update() {
+    if (!this.dirty) return;
+    this.graphics.clear();
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const gx = this.x + i;
+        const gy = this.y + j;
+        if (gx < cols && gy < rows && grid[gx][gy]) {
+          this.graphics.fill(0);
+          this.graphics.rect(i, j, 1, 1);
+        }
+      }
+    }
+    this.dirty = false;
+  }
+
+  draw() {
+    push();
+    translate(offsetX, offsetY);
+    scale(cellSize * zoom);
+    image(this.graphics, this.x, this.y);
+    pop();
+  }
+
+  isVisible() {
+    const px = this.x * cellSize * zoom + offsetX;
+    const py = this.y * cellSize * zoom + offsetY;
+    const w = this.size * cellSize * zoom;
+    const h = this.size * cellSize * zoom;
+    return !(px + w < 0 || px > width || py + h < 0 || py > height);
+  }
+}
 
 // =====================
 // Setup & Initialization
@@ -40,6 +89,7 @@ function setup() {
   document.body.style.overflow = "hidden";
 
   initGrid();
+  initTiles();
   initUI();
 
   // Center the view
@@ -47,13 +97,17 @@ function setup() {
   offsetY = -(rows * cellSize * zoom) / 2 + height / 2;
 
   canvas.oncontextmenu = () => false;
+}
 
-  // Offscreen buffer for alive cells
-  cellBuffer = createGraphics(cols, rows);
-  cellBuffer.noStroke();
-  cellBuffer.clear();
-  cellBuffer.noSmooth();
-  updateBuffer();
+function initTiles() {
+  tiles = [];
+  for (let tx = 0; tx < numTilesX; tx++) {
+    const row = [];
+    for (let ty = 0; ty < numTilesY; ty++) {
+      row.push(new Tile(tx * tileSize, ty * tileSize, tileSize));
+    }
+    tiles.push(row);
+  }
 }
 
 // =====================
@@ -62,10 +116,8 @@ function setup() {
 function initUI() {
   gui = new lil.GUI({ title: "Langton's Ant Controls" });
 
-  // --- Running toggle ---
   const runningController = gui.add(settings, "running").name("Running");
 
-  // --- Steps/Frame slider (logarithmic) ---
   Object.defineProperty(settings, "stepsLog", {
     get() { return settings.stepsPerFrame; },
     set(val) {
@@ -76,7 +128,6 @@ function initUI() {
   });
   const stepsController = gui.add(settings, "stepsLog", 1, 10000, 1).name("Steps / Frame");
 
-  // --- Logarithmic zoom slider ---
   settings.zoomLinear = Math.log10(zoom / minZoom) / Math.log10(maxZoom / minZoom);
   const zoomController = gui.add(settings, "zoomLinear", 0, 1, 0.001)
     .name("Zoom")
@@ -101,17 +152,14 @@ function initUI() {
   }
   updateZoomDisplay();
 
-  // --- Reset button ---
   const resetController = gui.add(settings, "reset").name("Clear Grid");
 
-  // --- GUI positioning ---
   gui.domElement.style.position = "absolute";
   gui.domElement.style.left = "10px";
   gui.domElement.style.top = "10px";
   gui.width = 300;
   gui.close();
 
-  // --- Store controllers ---
   settings._controllers = { runningController, stepsController, zoomController, resetController };
 }
 
@@ -144,11 +192,20 @@ function draw() {
 }
 
 function drawCells() {
+  for (let tx = 0; tx < numTilesX; tx++) {
+    for (let ty = 0; ty < numTilesY; ty++) {
+      const tile = tiles[tx][ty];
+      if (tile.isVisible()) {
+        tile.update();
+        tile.draw();
+      }
+    }
+  }
+
+  // Optional: draw grid outline
   push();
   scale(zoom);
   translate(offsetX / zoom, offsetY / zoom);
-  image(cellBuffer, 0, 0, cols * cellSize, rows * cellSize);
-
   stroke(255, 150);
   strokeWeight(1 / zoom);
   noFill();
@@ -167,31 +224,22 @@ function drawAnt() {
 // Ant Logic
 // =====================
 function stepAnt() {
-  let oldX = antX;
-  let oldY = antY;
+  const oldX = antX;
+  const oldY = antY;
 
-  // Flip current cell
   grid[oldX][oldY] = 1 - grid[oldX][oldY];
 
-  // Update buffer
-  if (grid[oldX][oldY]) {
-    cellBuffer.fill(0);
-    cellBuffer.noStroke();
-    cellBuffer.rect(oldX, oldY, 1, 1);
-  } else {
-    cellBuffer.erase();
-    cellBuffer.rect(oldX, oldY, 1, 1);
-    cellBuffer.noErase();
-  }
+  // mark tile dirty
+  const tileX = Math.floor(oldX / tileSize);
+  const tileY = Math.floor(oldY / tileSize);
+  tiles[tileX][tileY].dirty = true;
 
-  // Turn and move
   antDir = (antDir + (grid[oldX][oldY] === 1 ? 1 : 3)) % 4;
   if (antDir === 0) antY--;
   else if (antDir === 1) antX++;
   else if (antDir === 2) antY++;
   else if (antDir === 3) antX--;
 
-  // Wrap around
   antX = (antX + cols) % cols;
   antY = (antY + rows) % rows;
 }
@@ -232,25 +280,15 @@ function mouseReleased() { panning = false; }
 
 function toggleCell() {
   const cs = cellSize;
-  // Convert mouse coordinates to grid coordinates
   const gx = floor((mouseX - offsetX) / (cs * zoom));
   const gy = floor((mouseY - offsetY) / (cs * zoom));
 
-  // Check bounds
   if (gx >= 0 && gx < cols && gy >= 0 && gy < rows) {
-    // Flip the cell
     grid[gx][gy] = 1 - grid[gx][gy];
 
-    // Draw on the offscreen buffer (1 px per cell)
-    if (grid[gx][gy]) {
-      cellBuffer.fill(0);
-      cellBuffer.noStroke();
-      cellBuffer.rect(gx, gy, 1, 1);
-    } else {
-      cellBuffer.erase();
-      cellBuffer.rect(gx, gy, 1, 1);
-      cellBuffer.noErase();
-    }
+    const tileX = Math.floor(gx / tileSize);
+    const tileY = Math.floor(gy / tileSize);
+    tiles[tileX][tileY].dirty = true;
   }
 }
 
@@ -275,6 +313,7 @@ function mouseWheel(e) {
 
   return false;
 }
+
 // =====================
 // Keyboard Handling
 // =====================
@@ -292,11 +331,9 @@ function constrainOffsets() {
   const scaledWidth = cols * cellSize * zoom;
   const scaledHeight = rows * cellSize * zoom;
 
-  // Amount of grid allowed to go off-screen
   const maxOffscreenX = scaledWidth * 0.5;
   const maxOffscreenY = scaledHeight * 0.5;
 
-  // If the grid is smaller than the canvas, allow panning fully to center it
   const minX = Math.min(width - maxOffscreenX, width / 2 - scaledWidth);
   const maxX = Math.max(maxOffscreenX, width / 2);
   const minY = Math.min(height - maxOffscreenY, height / 2 - scaledHeight);
@@ -306,20 +343,6 @@ function constrainOffsets() {
   offsetY = constrain(offsetY, minY, maxY);
 }
 
-// =====================
-// Window Resize
-// =====================
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
-}
-
-// =====================
-// Update Offscreen Buffer
-// =====================
-function updateBuffer() {
-  cellBuffer.clear();
-  cellBuffer.fill(0);
-  for (let x = 0; x < cols; x++)
-    for (let y = 0; y < rows; y++)
-      if (grid[x][y]) cellBuffer.rect(x, y, 1, 1);
 }
