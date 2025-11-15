@@ -57,7 +57,7 @@ function setup() {
   document.body.style.overflow = "hidden";
 
   initGrid();
-  initTurmites(3);
+  initTurmites(99);
   initTiles();
   initUI();
 
@@ -232,14 +232,25 @@ function draw() {
 }
 
 function drawCells() {
+  // Only update and draw visible tiles
   for (let tx = 0; tx < numTilesX; tx++) {
     for (let ty = 0; ty < numTilesY; ty++) {
       const tile = tiles[tx][ty];
-      tile.update();
-      tile.draw();
+
+      // Update if dirty or if a turmite is inside this tile
+      const hasTurmite = turmites.some(
+        ant => Math.floor(ant.x / tileSize) === tx && Math.floor(ant.y / tileSize) === ty
+      );
+
+      if (tile.dirty || hasTurmite) {
+        tile.update(grid, turmites, tileSize);
+      }
+
+      tile.draw(offsetX, offsetY, cellSize, zoom);
     }
   }
 
+  // Optional: draw grid boundary
   push();
   translate(offsetX, offsetY);
   scale(cellSize * zoom);
@@ -254,30 +265,46 @@ function drawCells() {
 // Ant Logic
 // =====================
 function stepTurmites() {
-  if (!settings.parallelSteps) {
-    // Sequential: read, update, flip, move immediately
-    for (const ant of turmites) {
-      const oldX = ant.x;
-      const oldY = ant.y;
-      const newPos = ant.step(grid);
+  // Collect tile dirtiness updates
+  const dirtyTiles = new Set();
 
-      markTileDirty(oldX, oldY);
-      markTileDirty(newPos.x, newPos.y);
-    }
-  } else {
-    // Parallel: compute all steps first
-    const steps = turmites.map(a => a.nextStep(grid));
+  if (settings.parrallelSteps) {
+    // Parallel stepping: calculate next states for all turmites first
+    const nextSteps = turmites.map(t => t.nextStep(grid));
 
-    steps.forEach((info, i) => {
+    // Apply flips and moves after all nextStep calculations
+    nextSteps.forEach((stepInfo, i) => {
       const ant = turmites[i];
+
+      // Mark old tile dirty
+      dirtyTiles.add(`${Math.floor(ant.x / tileSize)},${Math.floor(ant.y / tileSize)}`);
+
+      // Apply step: updates ant's internal state, grid, and moves
+      const newPos = ant.applyStep(stepInfo, grid);
+
+      // Mark new tile dirty
+      dirtyTiles.add(`${Math.floor(newPos.x / tileSize)},${Math.floor(newPos.y / tileSize)}`);
+    });
+  } else {
+    // Sequential stepping: each turmite reads, updates, flips, moves immediately
+    for (const ant of turmites) {
       const oldTileX = Math.floor(ant.x / tileSize);
       const oldTileY = Math.floor(ant.y / tileSize);
-      tiles[oldTileX][oldTileY].dirty = true;
+      dirtyTiles.add(`${oldTileX},${oldTileY}`);
 
-      const newPos = ant.applyStep(info, grid);
-      markTileDirty(newPos.x, newPos.y);
-    });
+      const newPos = ant.step(grid); // modifies grid and moves ant
+
+      const newTileX = Math.floor(newPos.x / tileSize);
+      const newTileY = Math.floor(newPos.y / tileSize);
+      dirtyTiles.add(`${newTileX},${newTileY}`);
+    }
   }
+
+  // Mark tiles dirty
+  dirtyTiles.forEach(key => {
+    const [tx, ty] = key.split(',').map(Number);
+    if (tiles[tx] && tiles[tx][ty]) tiles[tx][ty].dirty = true;
+  });
 }
 
 // Helper to mark a tile dirty
