@@ -49,20 +49,39 @@ class Tile {
   update() {
     if (!this.dirty) return;
     this.graphics.clear();
+
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
         const gx = this.x + i;
         const gy = this.y + j;
-        if (gx < cols && gy < rows && grid[gx][gy]) {
-          this.graphics.fill(0);
-          this.graphics.rect(i, j, 1, 1);
+
+        if (gx < cols && gy < rows) {
+          // Draw alive cell
+          if (grid[gx][gy]) {
+            this.graphics.fill(0);
+            this.graphics.rect(i, j, 1, 1);
+          }
         }
       }
     }
+
+    // Draw the ant if it is inside this tile
+    const antTileX = Math.floor(antX / tileSize);
+    const antTileY = Math.floor(antY / tileSize);
+    if (antTileX === Math.floor(this.x / tileSize) && antTileY === Math.floor(this.y / tileSize)) {
+      const localX = antX - this.x;
+      const localY = antY - this.y;
+      this.graphics.fill(255, 50, 50);
+      this.graphics.noStroke();
+      this.graphics.rect(localX, localY, 1, 1);
+    }
+
     this.dirty = false;
   }
 
   draw() {
+    if (!this.isVisible()) return;
+
     push();
     translate(offsetX, offsetY);
     scale(cellSize * zoom);
@@ -188,36 +207,27 @@ function draw() {
   }
 
   drawCells();
-  drawAnt();
 }
 
 function drawCells() {
+  // Draw all visible tiles
   for (let tx = 0; tx < numTilesX; tx++) {
     for (let ty = 0; ty < numTilesY; ty++) {
       const tile = tiles[tx][ty];
-      if (tile.isVisible()) {
-        tile.update();
-        tile.draw();
-      }
+      tile.update(); // redraw if dirty
+      tile.draw();
     }
   }
 
-  // Optional: draw grid outline
+  // Optional: draw grid outline (scaled)
   push();
-  scale(zoom);
-  translate(offsetX / zoom, offsetY / zoom);
+  translate(offsetX, offsetY);
+  scale(cellSize * zoom);
   stroke(255, 150);
-  strokeWeight(1 / zoom);
+  strokeWeight(1 / (cellSize * zoom)); // scale stroke to match zoom
   noFill();
-  rect(0, 0, cols * cellSize, rows * cellSize);
+  rect(0, 0, cols, rows); // grid in grid coordinates
   pop();
-}
-
-function drawAnt() {
-  const cs = cellSize * zoom;
-  fill(255, 50, 50);
-  noStroke();
-  rect(antX * cs + offsetX, antY * cs + offsetY, cs, cs);
 }
 
 // =====================
@@ -227,13 +237,15 @@ function stepAnt() {
   const oldX = antX;
   const oldY = antY;
 
+  // Flip the current cell
   grid[oldX][oldY] = 1 - grid[oldX][oldY];
 
-  // mark tile dirty
-  const tileX = Math.floor(oldX / tileSize);
-  const tileY = Math.floor(oldY / tileSize);
-  tiles[tileX][tileY].dirty = true;
+  // Mark the tile containing the old cell dirty
+  const oldTileX = Math.floor(oldX / tileSize);
+  const oldTileY = Math.floor(oldY / tileSize);
+  tiles[oldTileX][oldTileY].dirty = true;
 
+  // Move the ant
   antDir = (antDir + (grid[oldX][oldY] === 1 ? 1 : 3)) % 4;
   if (antDir === 0) antY--;
   else if (antDir === 1) antX++;
@@ -242,7 +254,13 @@ function stepAnt() {
 
   antX = (antX + cols) % cols;
   antY = (antY + rows) % rows;
+
+  // Mark the tile containing the new ant position dirty
+  const newTileX = Math.floor(antX / tileSize);
+  const newTileY = Math.floor(antY / tileSize);
+  tiles[newTileX][newTileY].dirty = true;
 }
+
 
 // =====================
 // Mouse / Input Handling
