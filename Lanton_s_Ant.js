@@ -128,39 +128,79 @@ function initTiles() {
   }
 }
 
-// =====================
-// GUI Initialization
-// =====================
+let stepsController;
+
 function initUI() {
   gui = new lil.GUI({ title: "Langton's Ant Controls" });
 
   const runningController = gui.add(settings, "running").name("Running");
 
-  Object.defineProperty(settings, "stepsLog", {
-    get() { return settings.stepsPerFrame; },
-    set(val) {
-      const min = 1, max = 10000;
-      settings.stepsPerFrame = Math.round(val);
-      settings.stepsLinear = Math.log10(settings.stepsPerFrame / min) / Math.log10(max / min);
-    }
-  });
-  const stepsController = gui.add(settings, "stepsLog", 1, 10000, 1).name("Steps / Frame");
+  // --- Step mode dropdown ---
+  settings.stepMode = "Power of 2";
+  const stepModeController = gui.add(settings, "stepMode", ["Power of 2", "Linear"])
+    .name("Step Mode")
+    .onChange(updateStepsController);
 
+  // --- Single backing property for GUI ---
+  settings._stepsSliderValue = 1; // starts at 1
+
+  stepsController = gui.add(settings, "_stepsSliderValue", 1, 1048576, 1)
+    .name("Steps / Frame")
+    .onChange(updateStepsPerFrame);
+
+  const stepButton = {
+    stepOnce: () => {
+      for (let i = 0; i < settings.stepsPerFrame; i++) stepAnt();
+      drawCells(); // refresh immediately
+    }
+  };
+  gui.add(stepButton, "stepOnce").name("Step Once");
+
+  function updateStepsController() {
+    const input = stepsController.domElement.querySelector('input[type="number"]');
+
+    if (settings.stepMode === "Power of 2") {
+      // Slider steps in powers of 2
+      stepsController.min(0);
+      stepsController.max(20);
+      stepsController.step(1);
+      if (input) input.value = settings.stepsPerFrame;
+    } else {
+      // Linear slider
+      stepsController.min(1);
+      stepsController.max(1000000);
+      stepsController.step(1);
+      if (input) input.value = settings.stepsPerFrame;
+    }
+    updateStepsPerFrame(stepsController.getValue());
+  }
+
+  function updateStepsPerFrame(val) {
+    if (settings.stepMode === "Power of 2") {
+      settings.stepsPerFrame = Math.pow(2, Math.round(val));
+      // Update text input box to show actual step count
+      const input = stepsController.domElement.querySelector('input[type="number"]');
+      if (input) input.value = settings.stepsPerFrame;
+    } else {
+      settings.stepsPerFrame = Math.round(val);
+    }
+  }
+
+  updateStepsController();
+
+  // --- Zoom slider ---
   settings.zoomLinear = Math.log10(zoom / minZoom) / Math.log10(maxZoom / minZoom);
   const zoomController = gui.add(settings, "zoomLinear", 0, 1, 0.001)
     .name("Zoom")
-    .onChange(val => updateZoomFromSlider(val));
+    .onChange(updateZoomFromSlider);
 
   function updateZoomFromSlider(val) {
     const canvasCenterX = width / 2;
     const canvasCenterY = height / 2;
     const oldZoom = zoom;
-
     zoom = minZoom * Math.pow(maxZoom / minZoom, val);
-
     offsetX -= (canvasCenterX - offsetX) * (zoom / oldZoom - 1);
     offsetY -= (canvasCenterY - offsetY) * (zoom / oldZoom - 1);
-
     updateZoomDisplay();
   }
 
@@ -178,7 +218,7 @@ function initUI() {
   gui.width = 300;
   gui.close();
 
-  settings._controllers = { runningController, stepsController, zoomController, resetController };
+  settings._controllers = { runningController, stepsController, zoomController, resetController, stepModeController };
 }
 
 // =====================
@@ -197,16 +237,26 @@ function initGrid() {
 function draw() {
   background(30);
 
-  if (settings.running) pendingSteps += settings.stepsPerFrame;
+  if (!settings.running) {
+    drawCells();
+    return;
+  }
 
-  let maxThisFrame = 5000;
-  while (pendingSteps > 0 && maxThisFrame-- > 0) {
+  pendingSteps += settings.stepsPerFrame;
+
+  const startTime = performance.now();
+  const maxFrameTime = 1000 / 60; // limit to ~60 FPS
+
+  while (pendingSteps > 0) {
     stepAnt();
     pendingSteps--;
+
+    if (performance.now() - startTime > maxFrameTime) break;
   }
 
   drawCells();
 }
+
 
 function drawCells() {
   for (let tx = 0; tx < numTilesX; tx++) {
