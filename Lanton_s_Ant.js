@@ -11,7 +11,20 @@ let offsetX = 0, offsetY = 0;
 let panning = false;
 let lastMouseX = 0, lastMouseY = 0;
 
-let antX, antY, antDir = 0;
+let turmites = [];
+
+function initTurmites(n = 1) {
+  turmites = [];
+  for (let i = 0; i < n; i++) {
+    turmites.push(new Turmite(
+      Math.floor(cols / 2),
+      Math.floor(rows / 2),
+      cols,
+      rows
+    ));
+  }
+}
+
 let pendingSteps = 0;
 
 let tiles = [];
@@ -23,6 +36,7 @@ let gui;
 let settings = {
   running: false,
   stepsPerFrame: 1,
+  parallelSteps: false,
   stepsLinear: Math.log10(1000) / Math.log10(10000),
   get stepsDisplay() { return this.stepsPerFrame; },
   reset: () => {
@@ -34,71 +48,6 @@ let settings = {
 };
 
 // =====================
-// Tile Class
-// =====================
-class Tile {
-  constructor(x, y, size) {
-    this.x = x; // tile coordinates in grid
-    this.y = y;
-    this.size = size; // size in cells
-    this.graphics = createGraphics(size, size);
-    this.graphics.noStroke();
-    this.dirty = true;
-  }
-
-  update() {
-    if (!this.dirty) return;
-    this.graphics.clear();
-
-    for (let i = 0; i < this.size; i++) {
-      for (let j = 0; j < this.size; j++) {
-        const gx = this.x + i;
-        const gy = this.y + j;
-
-        if (gx < cols && gy < rows) {
-          const index = gx + gy * cols;
-          if (grid[index]) {
-            this.graphics.fill(0);
-            this.graphics.rect(i, j, 1, 1);
-          }
-        }
-      }
-    }
-
-    // Draw the ant if it is inside this tile
-    const antTileX = Math.floor(antX / tileSize);
-    const antTileY = Math.floor(antY / tileSize);
-    if (antTileX === Math.floor(this.x / tileSize) && antTileY === Math.floor(this.y / tileSize)) {
-      const localX = antX - this.x;
-      const localY = antY - this.y;
-      this.graphics.fill(255, 50, 50);
-      this.graphics.noStroke();
-      this.graphics.rect(localX, localY, 1, 1);
-    }
-
-    this.dirty = false;
-  }
-
-  draw() {
-    if (!this.isVisible()) return;
-
-    push();
-    translate(offsetX, offsetY);
-    scale(cellSize * zoom);
-    image(this.graphics, this.x, this.y);
-    pop();
-  }
-
-  isVisible() {
-    const px = this.x * cellSize * zoom + offsetX;
-    const py = this.y * cellSize * zoom + offsetY;
-    const w = this.size * cellSize * zoom;
-    const h = this.size * cellSize * zoom;
-    return !(px + w < 0 || px > width || py + h < 0 || py > height);
-  }
-}
-
-// =====================
 // Setup & Initialization
 // =====================
 function setup() {
@@ -108,6 +57,7 @@ function setup() {
   document.body.style.overflow = "hidden";
 
   initGrid();
+  initTurmites(3);
   initTiles();
   initUI();
 
@@ -150,7 +100,7 @@ function initUI() {
 
   const stepButton = {
     stepOnce: () => {
-      for (let i = 0; i < settings.stepsPerFrame; i++) stepAnt();
+      for (let i = 0; i < settings.stepsPerFrame; i++) stepTurmites();
       drawCells(); // refresh immediately
     }
   };
@@ -213,6 +163,8 @@ function initUI() {
 
   updateStepsController();
 
+  gui.add(settings, "parallelSteps").name("parallel Steps");
+
   // --- Zoom slider ---
   settings.zoomLinear = Math.log10(zoom / minZoom) / Math.log10(maxZoom / minZoom);
   const zoomController = gui.add(settings, "zoomLinear", 0, 1, 0.001)
@@ -251,9 +203,6 @@ function initUI() {
 // =====================
 function initGrid() {
   grid = new Uint8Array(cols * rows); // flat typed array
-  antX = Math.floor(cols / 2);
-  antY = Math.floor(rows / 2);
-  antDir = 0;
 }
 
 // =====================
@@ -273,7 +222,7 @@ function draw() {
   const maxFrameTime = 1000 / 60; // limit to ~60 FPS
 
   while (pendingSteps > 0) {
-    stepAnt();
+    stepTurmites();
     pendingSteps--;
 
     if (performance.now() - startTime > maxFrameTime) break;
@@ -304,31 +253,39 @@ function drawCells() {
 // =====================
 // Ant Logic
 // =====================
-function stepAnt() {
-  const oldX = antX;
-  const oldY = antY;
+function stepTurmites() {
+  if (!settings.parallelSteps) {
+    // Sequential: read, update, flip, move immediately
+    for (const ant of turmites) {
+      const oldX = ant.x;
+      const oldY = ant.y;
+      const newPos = ant.step(grid);
 
-  const oldIndex = oldX + oldY * cols;
-  grid[oldIndex] = 1 - grid[oldIndex];
+      markTileDirty(oldX, oldY);
+      markTileDirty(newPos.x, newPos.y);
+    }
+  } else {
+    // Parallel: compute all steps first
+    const steps = turmites.map(a => a.nextStep(grid));
 
-  const oldTileX = Math.floor(oldX / tileSize);
-  const oldTileY = Math.floor(oldY / tileSize);
-  tiles[oldTileX][oldTileY].dirty = true;
+    steps.forEach((info, i) => {
+      const ant = turmites[i];
+      const oldTileX = Math.floor(ant.x / tileSize);
+      const oldTileY = Math.floor(ant.y / tileSize);
+      tiles[oldTileX][oldTileY].dirty = true;
 
-  antDir = (antDir + (grid[oldIndex] === 1 ? 1 : 3)) % 4;
-  if (antDir === 0) antY--;
-  else if (antDir === 1) antX++;
-  else if (antDir === 2) antY++;
-  else if (antDir === 3) antX--;
-
-  antX = (antX + cols) % cols;
-  antY = (antY + rows) % rows;
-
-  const newTileX = Math.floor(antX / tileSize);
-  const newTileY = Math.floor(antY / tileSize);
-  tiles[newTileX][newTileY].dirty = true;
+      const newPos = ant.applyStep(info, grid);
+      markTileDirty(newPos.x, newPos.y);
+    });
+  }
 }
 
+// Helper to mark a tile dirty
+function markTileDirty(gx, gy) {
+  const tileX = Math.floor(gx / tileSize);
+  const tileY = Math.floor(gy / tileSize);
+  if (tiles[tileX] && tiles[tileX][tileY]) tiles[tileX][tileY].dirty = true;
+}
 // =====================
 // Mouse / Input Handling
 // =====================
@@ -410,7 +367,6 @@ function keyPressed() {
     settings._controllers?.zoomController.updateDisplay();
     settings._controllers?.stepsController.updateDisplay();
   }
-  if (key === "C" || key === "c") settings.reset();
 }
 
 function constrainOffsets() {
