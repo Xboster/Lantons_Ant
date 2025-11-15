@@ -142,7 +142,7 @@ function initUI() {
     .onChange(updateStepsController);
 
   // --- Single backing property for GUI ---
-  settings._stepsSliderValue = 1; // starts at 1
+  settings._stepsSliderValue = 0; // 2^0 = 1 step
 
   stepsController = gui.add(settings, "_stepsSliderValue", 1, 1048576, 1)
     .name("Steps / Frame")
@@ -170,9 +170,33 @@ function initUI() {
       stepsController.min(1);
       stepsController.max(1000000);
       stepsController.step(1);
+      stepsController.name("Steps / Frame");
       if (input) input.value = settings.stepsPerFrame;
     }
+
     updateStepsPerFrame(stepsController.getValue());
+  }
+
+  function updateStepsPerFrame(val) {
+    if (settings.stepMode === "Power of 2") {
+      settings.stepsPerFrame = Math.pow(2, Math.round(val));
+
+      // Update the input box
+      const input = stepsController.domElement.querySelector('input[type="number"]');
+      if (input) input.value = settings.stepsPerFrame;
+
+      // Update the left label
+      if (stepsController) stepsController.name(`Steps / Frame: ${settings.stepsPerFrame}`);
+    } else {
+      settings.stepsPerFrame = Math.round(val);
+
+      // Reset label in linear mode
+      if (stepsController) stepsController.name("Steps / Frame");
+    }
+  }
+  // Helper to update the left label
+  function updateStepsLabel(value) {
+    if (stepsController) stepsController.name(`Steps / Frame: ${value}`);
   }
 
   function updateStepsPerFrame(val) {
@@ -180,6 +204,7 @@ function initUI() {
       settings.stepsPerFrame = Math.pow(2, Math.round(val));
       // Update text input box to show actual step count
       const input = stepsController.domElement.querySelector('input[type="number"]');
+      updateStepsLabel(settings.stepsPerFrame);
       if (input) input.value = settings.stepsPerFrame;
     } else {
       settings.stepsPerFrame = Math.round(val);
@@ -256,7 +281,6 @@ function draw() {
 
   drawCells();
 }
-
 
 function drawCells() {
   for (let tx = 0; tx < numTilesX; tx++) {
