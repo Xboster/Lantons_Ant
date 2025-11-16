@@ -335,15 +335,17 @@ function initUI() {
 function draw() {
   background(30);
 
+  // When paused, just draw everything
   if (!settings.running) {
     drawChunks();
     drawTurmites();
     drawBorder();
-    pendingSteps = 0; // reset queue when paused
+    pendingSteps = 0;
     lastFrameSteps = 0;
     return;
   }
 
+  // Accumulate steps
   pendingSteps += settings.stepsPerFrame;
 
   const startTime = performance.now();
@@ -352,9 +354,13 @@ function draw() {
 
   while (pendingSteps > 0) {
     if (settings.parallel) {
+      // Prepare all steps first
       const nextSteps = turmites.map(t => t.prepareStep());
+
+      // Apply all steps simultaneously
       nextSteps.forEach((step, i) => turmites[i].applyStep(step));
     } else {
+      // Sequential stepping
       turmites.forEach(t => {
         const step = t.step(grid);
         markChunkDirty(step.old.x, step.old.y);
@@ -365,16 +371,24 @@ function draw() {
     pendingSteps--;
     stepsProcessed++;
 
+    // Stop if frame is taking too long
     if (performance.now() - startTime > maxFrameTime) break;
   }
 
-  lastFrameSteps = stepsProcessed; // store for benchmarking
+  lastFrameSteps = stepsProcessed;
 
-  drawChunks();
+  // --- Draw chunks with dynamic LOD ---
+  for (let cx = 0; cx < numChunksX; cx++) {
+    for (let cy = 0; cy < numChunksY; cy++) {
+      chunks[cx][cy].draw();
+    }
+  }
+
+  // Draw turmites
   drawTurmites();
   drawBorder();
 
-  // Print steps processed this frame to console
+  // Print steps processed for benchmarking
   console.log(`Steps this frame: ${lastFrameSteps}`);
 }
 
@@ -393,6 +407,9 @@ function drawChunks() {
 }
 
 function drawTurmites() {
+  // Only skip drawing turmites when running and zoomed way out
+  if (settings.running && cellSize * zoom < 2) return;
+
   push();
   translate(offsetX, offsetY);
   scale(cellSize * zoom);
