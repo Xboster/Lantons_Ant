@@ -34,6 +34,7 @@ class Chunk {
     // p5.Graphics buffer with willReadFrequently = true for faster loadPixels
     this.gfx = createGraphics(size, size, undefined, { willReadFrequently: true });
     this.gfx.noStroke();
+    this.gfx.noSmooth();
     this.gfx.pixelDensity(1); // avoid high-DPI slowdowns
 
     // Track dirty cells
