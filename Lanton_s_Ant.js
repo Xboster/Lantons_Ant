@@ -3,7 +3,7 @@ const ROWS = 512;
 const cellSize = 16;
 let zoom = 0.2;
 const minZoom = 0.001, maxZoom = 1;
-const chunkSize = 64;
+const chunkSize = 512;
 let numChunksX, numChunksY;
 let chunks = [];
 let grid;
@@ -21,6 +21,7 @@ const settings = {
   get stepsDisplay() { return this.stepsPerFrame; },
   clear: () => resetWorld()
 };
+let lastFrameSteps = 0;
 
 class Chunk {
   constructor(cx, cy, size) {
@@ -29,36 +30,82 @@ class Chunk {
     this.size = size;
     this.x = cx * size;
     this.y = cy * size;
-    this.gfx = createGraphics(size, size);
+
+    // p5.Graphics buffer with willReadFrequently = true for faster loadPixels
+    this.gfx = createGraphics(size, size, undefined, { willReadFrequently: true });
     this.gfx.noStroke();
-    this.dirty = true;
+    this.gfx.pixelDensity(1); // avoid high-DPI slowdowns
+
+    // Track dirty cells
+    this.dirtyCells = new Set();
+    this.dirty = true; // force full redraw at start
   }
 
+  // Mark a single cell dirty
+  markDirty(gx, gy) {
+    if (gx >= this.x && gx < this.x + this.size &&
+      gy >= this.y && gy < this.y + this.size) {
+      const localX = gx - this.x;
+      const localY = gy - this.y;
+      this.dirtyCells.add(localY * this.size + localX);
+    }
+  }
+
+  // Update only the dirty cells (or full chunk if needed)
   update() {
-    if (!this.dirty) return;
-    this.gfx.clear();
-    for (let i = 0; i < this.size; i++) {
+    if (this.dirty) {
+      this.gfx.loadPixels();
       for (let j = 0; j < this.size; j++) {
-        const gx = this.x + i;
-        const gy = this.y + j;
-        if (gx < COLS && gy < ROWS) {
-          if (grid[gx + gy * COLS]) {
-            this.gfx.fill(0);
-            this.gfx.rect(i, j, 1, 1);
-          }
+        for (let i = 0; i < this.size; i++) {
+          const gx = this.x + i;
+          const gy = this.y + j;
+          const col = (gx < COLS && gy < ROWS && grid[gx + gy * COLS]) ? 0 : 255;
+
+          const pxIndex = 4 * (j * this.size + i);
+          this.gfx.pixels[pxIndex] = col;
+          this.gfx.pixels[pxIndex + 1] = col;
+          this.gfx.pixels[pxIndex + 2] = col;
+          this.gfx.pixels[pxIndex + 3] = 255;
         }
       }
+      this.gfx.updatePixels();
+      this.dirty = false;
+      this.dirtyCells.clear();
+      return;
     }
-    this.dirty = false;
+
+    if (this.dirtyCells.size === 0) return;
+
+    this.gfx.loadPixels();
+    for (let idx of this.dirtyCells) {
+      const localX = idx % this.size;
+      const localY = Math.floor(idx / this.size);
+      const gx = this.x + localX;
+      const gy = this.y + localY;
+
+      const col = (gx < COLS && gy < ROWS && grid[gx + gy * COLS]) ? 0 : 255;
+      const pxIndex = 4 * (localY * this.size + localX);
+      this.gfx.pixels[pxIndex] = col;
+      this.gfx.pixels[pxIndex + 1] = col;
+      this.gfx.pixels[pxIndex + 2] = col;
+      this.gfx.pixels[pxIndex + 3] = 255;
+    }
+    this.gfx.updatePixels();
+    this.dirtyCells.clear();
   }
 
+  // Draw chunk on screen
   draw() {
     const px = this.x * cellSize * zoom + offsetX;
     const py = this.y * cellSize * zoom + offsetY;
     const w = this.size * cellSize * zoom;
     const h = this.size * cellSize * zoom;
+
+    // Skip offscreen chunks
     if (px + w < 0 || px > width || py + h < 0 || py > height) return;
+
     this.update();
+
     push();
     translate(offsetX, offsetY);
     scale(cellSize * zoom);
@@ -66,10 +113,10 @@ class Chunk {
     pop();
   }
 
-  markDirty(gx, gy) {
-    if (gx >= this.x && gy >= this.y && gx < this.x + this.size && gy < this.y + this.size) {
-      this.dirty = true;
-    }
+  // Force a full redraw of the chunk (useful on reset)
+  markAllDirty() {
+    this.dirty = true;
+    this.dirtyCells.clear();
   }
 }
 
@@ -80,12 +127,15 @@ class Turmite {
     this.dir = 0;
   }
 
-  step() {
+  // Sequential step
+  step(grid) {
     const idx = this.x + this.y * COLS;
     const cell = grid[idx];
     const turn = cell ? -1 : 1;
     this.dir = (this.dir + turn + 4) % 4;
     grid[idx] = 1 - cell;
+
+    markChunkDirty(this.x, this.y);
 
     let nx = this.x, ny = this.y;
     switch (this.dir) {
@@ -95,16 +145,52 @@ class Turmite {
       case 3: nx = (this.x - 1 + COLS) % COLS; break;
     }
 
+    markChunkDirty(nx, ny);
     const old = { x: this.x, y: this.y };
     this.x = nx; this.y = ny;
     return { old, newPos: { x: nx, y: ny } };
+  }
+
+  // Prepare step for parallel
+  prepareStep() {
+    const idx = this.x + this.y * COLS;
+    const cell = grid[idx];
+    const turn = cell ? -1 : 1;
+    const newDir = (this.dir + turn + 4) % 4;
+
+    let nx = this.x, ny = this.y;
+    switch (newDir) {
+      case 0: ny = (this.y - 1 + ROWS) % ROWS; break;
+      case 1: nx = (this.x + 1) % COLS; break;
+      case 2: ny = (this.y + 1) % ROWS; break;
+      case 3: nx = (this.x - 1 + COLS) % COLS; break;
+    }
+
+    return {
+      oldPos: { x: this.x, y: this.y },
+      newPos: { x: nx, y: ny },
+      newDir,
+      flipIdx: idx,
+      oldCell: cell
+    };
+  }
+
+  // Apply prepared step
+  applyStep(step) {
+    grid[step.flipIdx] = 1 - step.oldCell;
+    markChunkDirty(step.oldPos.x, step.oldPos.y);
+    markChunkDirty(step.newPos.x, step.newPos.y);
+    this.x = step.newPos.x;
+    this.y = step.newPos.y;
+    this.dir = step.newDir;
   }
 }
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
   noSmooth();
-
+  setAttributes({ antialias: false });
+  pixelDensity(1);
   document.body.style.margin = 0;
   document.body.style.overflow = "hidden";
   canvas.oncontextmenu = () => false;
@@ -122,7 +208,7 @@ function setup() {
     chunks.push(row);
   }
 
-  initTurmites(999);
+  initTurmites(1);
   initUI();
 
   offsetX = -(COLS * cellSize * zoom) / 2 + width / 2;
@@ -147,6 +233,7 @@ function resetWorld() {
 function initUI() {
   gui = new lil.GUI({ title: 'Langton Ant Controls' });
 
+  // --- Running toggle ---
   const runningController = gui.add(settings, 'running').name('Running');
 
   // --- Step mode dropdown ---
@@ -166,10 +253,12 @@ function initUI() {
       stepsController.min(0);
       stepsController.max(20);
       stepsController.step(1);
+      stepsController.name(`Steps / Frame: ${Math.pow(2, Math.round(stepsController.getValue()))}`);
     } else {
       stepsController.min(1);
       stepsController.max(1000000);
       stepsController.step(1);
+      stepsController.name('Steps / Frame');
     }
     updateStepsPerFrame(stepsController.getValue());
   }
@@ -177,8 +266,10 @@ function initUI() {
   function updateStepsPerFrame(val) {
     if (settings.stepMode === "Power of 2") {
       settings.stepsPerFrame = Math.pow(2, Math.round(val));
+      stepsController.name(`Steps / Frame: ${settings.stepsPerFrame}`);
     } else {
       settings.stepsPerFrame = Math.round(val);
+      stepsController.name('Steps / Frame');
     }
 
     // Reset queued steps to avoid leftover backlog
@@ -191,17 +282,29 @@ function initUI() {
   gui.add({
     stepOnce: () => {
       for (let i = 0; i < settings.stepsPerFrame; i++) {
-        turmites.forEach(t => {
-          const step = t.step();
-          markChunkDirty(step.old.x, step.old.y);
-          markChunkDirty(step.newPos.x, step.newPos.y);
-        });
+        if (settings.parallel) {
+          // Parallel stepping
+          const nextSteps = turmites.map(t => t.prepareStep());
+          nextSteps.forEach((step, i) => turmites[i].applyStep(step));
+        } else {
+          // Sequential stepping
+          turmites.forEach(t => {
+            const step = t.step(grid);
+            markChunkDirty(step.old.x, step.old.y);
+            markChunkDirty(step.newPos.x, step.newPos.y);
+          });
+        }
       }
+
+      // Redraw chunks and turmites immediately
+      drawChunks();
+      drawTurmites();
+      drawBorder();
     }
   }, 'stepOnce').name('Step Once');
 
+  // --- Other controls ---
   gui.add(settings, 'parallel').name('Parallel Steps');
-  // gui.add(settings, 'turmiteCount', 1, 500, 1).name('Turmites').onFinishChange(v => initTurmites(v));
   gui.add(settings, 'clear').name('Clear Grid');
 
   // --- Zoom slider ---
@@ -217,56 +320,61 @@ function initUI() {
       offsetY -= (canvasCenterY - offsetY) * (zoom / oldZoom - 1);
     });
 
+  // --- GUI style ---
   gui.domElement.style.position = 'absolute';
   gui.domElement.style.left = '10px';
   gui.domElement.style.top = '10px';
   gui.close();
 
+  // Store controllers for later access
   settings._controllers = { runningController, stepsController, zoomController, stepModeController };
 }
 
 function draw() {
   background(30);
 
-  // Always draw when paused
   if (!settings.running) {
     drawChunks();
     drawTurmites();
     drawBorder();
+    pendingSteps = 0; // reset queue when paused
+    lastFrameSteps = 0;
     return;
   }
 
-  // Accumulate steps for this frame
   pendingSteps += settings.stepsPerFrame;
 
   const startTime = performance.now();
-  const maxFrameTime = 1000 / 60; // ~16.67ms per frame
-
-  // Process steps but cap to avoid long freezes
-  const MAX_STEPS_PER_FRAME = 10000;
+  const maxFrameTime = 1000 / 2;
   let stepsProcessed = 0;
 
-  while (pendingSteps > 0 && stepsProcessed < MAX_STEPS_PER_FRAME) {
-    // Sequential stepping
-    turmites.forEach(t => {
-      const step = t.step(grid); // returns old & new positions
-      markChunkDirty(step.old.x, step.old.y);
-      markChunkDirty(step.newPos.x, step.newPos.y);
-    });
+  while (pendingSteps > 0) {
+    if (settings.parallel) {
+      const nextSteps = turmites.map(t => t.prepareStep());
+      nextSteps.forEach((step, i) => turmites[i].applyStep(step));
+    } else {
+      turmites.forEach(t => {
+        const step = t.step(grid);
+        markChunkDirty(step.old.x, step.old.y);
+        markChunkDirty(step.newPos.x, step.newPos.y);
+      });
+    }
 
     pendingSteps--;
     stepsProcessed++;
 
-    // Stop if we exceed max frame time
     if (performance.now() - startTime > maxFrameTime) break;
   }
 
-  // Draw updated grid and turmites
+  lastFrameSteps = stepsProcessed; // store for benchmarking
+
   drawChunks();
   drawTurmites();
   drawBorder();
-}
 
+  // Print steps processed this frame to console
+  console.log(`Steps this frame: ${lastFrameSteps}`);
+}
 
 function markChunkDirty(gx, gy) {
   const cx = Math.floor(gx / chunkSize);
