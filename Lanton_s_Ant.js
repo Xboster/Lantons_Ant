@@ -1,5 +1,5 @@
-const COLS = 512;
-const ROWS = 512;
+const COLS = 2048;
+const ROWS = 2048;
 const cellSize = 16;
 let zoom = 0.2;
 const minZoom = 0.001, maxZoom = 1;
@@ -97,20 +97,21 @@ class Chunk {
 
   // Draw chunk on screen
   draw() {
-    const px = this.x * cellSize * zoom + offsetX;
-    const py = this.y * cellSize * zoom + offsetY;
-    const w = this.size * cellSize * zoom;
-    const h = this.size * cellSize * zoom;
+    // Calculate scaled position
+    const px = Math.round(this.x * cellSize * zoom + offsetX);
+    const py = Math.round(this.y * cellSize * zoom + offsetY);
+    const w = Math.ceil(this.size * cellSize * zoom); // ceil to cover gaps
+    const h = Math.ceil(this.size * cellSize * zoom);
 
-    // Skip offscreen chunks
+    // Skip if completely offscreen
     if (px + w < 0 || px > width || py + h < 0 || py > height) return;
 
+    // Update dirty pixels
     this.update();
 
     push();
-    translate(offsetX, offsetY);
-    scale(cellSize * zoom);
-    image(this.gfx, this.x, this.y);
+    // Draw the chunk scaled to the correct size
+    image(this.gfx, px, py, w, h);
     pop();
   }
 
