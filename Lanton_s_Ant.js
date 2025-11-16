@@ -27,42 +27,43 @@ class Chunk {
   constructor(cx, cy, size) {
     this.cx = cx;
     this.cy = cy;
-    this.size = size;
+
+    // Handle partial chunks at edges
+    this.width = Math.min(size, COLS - cx * size);
+    this.height = Math.min(size, ROWS - cy * size);
+
     this.x = cx * size;
     this.y = cy * size;
 
-    // p5.Graphics buffer with willReadFrequently = true for faster loadPixels
-    this.gfx = createGraphics(size, size, undefined, { willReadFrequently: true });
+    // Graphics buffer matches actual chunk dimensions
+    this.gfx = createGraphics(this.width, this.height, P2D, { willReadFrequently: true });
     this.gfx.noStroke();
     this.gfx.noSmooth();
-    this.gfx.pixelDensity(1); // avoid high-DPI slowdowns
+    this.gfx.pixelDensity(1);
 
-    // Track dirty cells
     this.dirtyCells = new Set();
-    this.dirty = true; // force full redraw at start
+    this.dirty = true;
   }
 
-  // Mark a single cell dirty
   markDirty(gx, gy) {
-    if (gx >= this.x && gx < this.x + this.size &&
-      gy >= this.y && gy < this.y + this.size) {
+    if (gx >= this.x && gx < this.x + this.width &&
+      gy >= this.y && gy < this.y + this.height) {
       const localX = gx - this.x;
       const localY = gy - this.y;
-      this.dirtyCells.add(localY * this.size + localX);
+      this.dirtyCells.add(localY * this.width + localX);
     }
   }
 
-  // Update only the dirty cells (or full chunk if needed)
   update() {
     if (this.dirty) {
       this.gfx.loadPixels();
-      for (let j = 0; j < this.size; j++) {
-        for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.height; j++) {
+        for (let i = 0; i < this.width; i++) {
           const gx = this.x + i;
           const gy = this.y + j;
           const col = (gx < COLS && gy < ROWS && grid[gx + gy * COLS]) ? 0 : 255;
 
-          const pxIndex = 4 * (j * this.size + i);
+          const pxIndex = 4 * (j * this.width + i);
           this.gfx.pixels[pxIndex] = col;
           this.gfx.pixels[pxIndex + 1] = col;
           this.gfx.pixels[pxIndex + 2] = col;
@@ -79,13 +80,13 @@ class Chunk {
 
     this.gfx.loadPixels();
     for (let idx of this.dirtyCells) {
-      const localX = idx % this.size;
-      const localY = Math.floor(idx / this.size);
+      const localX = idx % this.width;
+      const localY = Math.floor(idx / this.width);
       const gx = this.x + localX;
       const gy = this.y + localY;
 
       const col = (gx < COLS && gy < ROWS && grid[gx + gy * COLS]) ? 0 : 255;
-      const pxIndex = 4 * (localY * this.size + localX);
+      const pxIndex = 4 * (localY * this.width + localX);
       this.gfx.pixels[pxIndex] = col;
       this.gfx.pixels[pxIndex + 1] = col;
       this.gfx.pixels[pxIndex + 2] = col;
@@ -95,27 +96,18 @@ class Chunk {
     this.dirtyCells.clear();
   }
 
-  // Draw chunk on screen
   draw() {
-    // Calculate scaled position
     const px = Math.round(this.x * cellSize * zoom + offsetX);
     const py = Math.round(this.y * cellSize * zoom + offsetY);
-    const w = Math.ceil(this.size * cellSize * zoom); // ceil to cover gaps
-    const h = Math.ceil(this.size * cellSize * zoom);
+    const w = Math.ceil(this.width * cellSize * zoom);
+    const h = Math.ceil(this.height * cellSize * zoom);
 
-    // Skip if completely offscreen
     if (px + w < 0 || px > width || py + h < 0 || py > height) return;
 
-    // Update dirty pixels
     this.update();
-
-    push();
-    // Draw the chunk scaled to the correct size
     image(this.gfx, px, py, w, h);
-    pop();
   }
 
-  // Force a full redraw of the chunk (useful on reset)
   markAllDirty() {
     this.dirty = true;
     this.dirtyCells.clear();
