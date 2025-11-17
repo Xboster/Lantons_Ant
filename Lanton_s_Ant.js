@@ -1,5 +1,5 @@
-const COLS = 2048;
-const ROWS = 2048;
+const COLS = 8192;
+const ROWS = 8192;
 const cellSize = 16;
 let zoom = 0.2;
 const minZoom = 0.001, maxZoom = 1;
@@ -231,8 +231,8 @@ function initUI() {
   const runningController = gui.add(settings, 'running').name('Running');
 
   // --- Step mode dropdown ---
-  settings.stepMode = 'Power of 2';
-  const stepModeController = gui.add(settings, 'stepMode', ['Power of 2', 'Linear'])
+  settings.stepMode = 'Fixed';
+  const stepModeController = gui.add(settings, 'stepMode', ['Fixed', 'Exponential', 'Unlimited'])
     .name('Step Mode')
     .onChange(updateStepsController);
 
@@ -242,38 +242,9 @@ function initUI() {
     .name('Steps / Frame')
     .onChange(updateStepsPerFrame);
 
-  function updateStepsController() {
-    if (settings.stepMode === 'Power of 2') {
-      stepsController.min(0);
-      stepsController.max(20);
-      stepsController.step(1);
-      stepsController.name(`Steps / Frame: ${Math.pow(2, Math.round(stepsController.getValue()))}`);
-    } else {
-      stepsController.min(1);
-      stepsController.max(1000000);
-      stepsController.step(1);
-      stepsController.name('Steps / Frame');
-    }
-    updateStepsPerFrame(stepsController.getValue());
-  }
-
-  function updateStepsPerFrame(val) {
-    if (settings.stepMode === "Power of 2") {
-      settings.stepsPerFrame = Math.pow(2, Math.round(val));
-      stepsController.name(`Steps / Frame: ${settings.stepsPerFrame}`);
-    } else {
-      settings.stepsPerFrame = Math.round(val);
-      stepsController.name('Steps / Frame');
-    }
-
-    // Reset queued steps to avoid leftover backlog
-    pendingSteps = 0;
-  }
-
-  updateStepsController();
-
   // --- Step Once button ---
-  gui.add({
+
+  const stepOnceController = gui.add({
     stepOnce: () => {
       for (let i = 0; i < settings.stepsPerFrame; i++) {
         if (settings.parallel) {
@@ -296,6 +267,67 @@ function initUI() {
       drawBorder();
     }
   }, 'stepOnce').name('Step Once');
+
+  function updateStepsController() {
+    if (settings.stepMode === 'Fixed') {
+      stepsController.enable();
+      stepOnceController.enable();
+
+      stepsController.min(1);
+      stepsController.max(1000000);
+      stepsController.step(1);
+
+      const clamped = Math.max(1, Math.round(stepsController.getValue()));
+      stepsController.setValue(clamped);
+
+      stepsController.name('Steps / Frame');
+    } else if (settings.stepMode === 'Exponential') {
+      stepsController.enable();
+      stepOnceController.enable();
+
+      stepsController.min(0);
+      stepsController.max(20);
+      stepsController.step(1);
+
+      // Convert previous value to nearest power-of-two exponent
+      const prev = stepsController.getValue();
+      const exponent = Math.round(Math.log2(Math.max(1, prev))); // clamp to >=1 for log2
+      const clampedExp = Math.min(20, Math.max(0, exponent));
+
+      stepsController.setValue(clampedExp);
+      stepsController.name(`Steps / Frame: ${2 ** clampedExp}`);
+
+      updateStepsPerFrame(exp);
+    } else if (settings.stepMode === 'Unlimited') {
+      stepsController.disable();
+      stepOnceController.disable();
+
+      // Display lastFrameSteps
+      stepsController.name(`Steps / Frame: ${lastFrameSteps}`);
+      settings.stepsPerFrame = Infinity; // or a sentinel like -1
+
+      // Reset pendingSteps
+      pendingSteps = 0;
+    }
+    updateStepsPerFrame(stepsController.getValue());
+  }
+
+  function updateStepsPerFrame(val) {
+    if (settings.stepMode === "Unlimited") return;
+
+    if (settings.stepMode === "Exponential") {
+      settings.stepsPerFrame = Math.pow(2, Math.round(val));
+      stepsController.name(`Steps / Frame: ${settings.stepsPerFrame}`);
+    } else {
+      settings.stepsPerFrame = Math.round(val);
+      stepsController.name('Steps / Frame');
+    }
+
+    // Reset queued steps to avoid leftover backlog
+    pendingSteps = 0;
+  }
+
+  updateStepsController();
 
   // --- Other controls ---
   gui.add(settings, 'parallel').name('Parallel Steps');
@@ -321,7 +353,8 @@ function initUI() {
   gui.close();
 
   // Store controllers for later access
-  settings._controllers = { runningController, stepsController, zoomController, stepModeController };
+  settings._controllers = { runningController, stepModeController, stepsController, stepOnceController, zoomController };
+  gui.open();
 }
 
 function draw() {
@@ -382,6 +415,9 @@ function draw() {
 
   // Print steps processed for benchmarking
   console.log(`Steps this frame: ${lastFrameSteps}`);
+  if (settings.stepMode === "Unlimited") {
+    settings._controllers.stepsController.name(`Steps / Frame: ${lastFrameSteps}`);
+  }
 }
 
 function markChunkDirty(gx, gy) {
