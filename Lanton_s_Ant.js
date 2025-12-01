@@ -1,5 +1,5 @@
-const COLS = 8192;
-const ROWS = 8192;
+const COLS = 2048;
+const ROWS = 2048;
 const cellSize = 16;
 let zoom = 0.2;
 const minZoom = 0.001, maxZoom = 1;
@@ -414,7 +414,7 @@ function draw() {
   drawBorder();
 
   // Print steps processed for benchmarking
-  console.log(`Steps this frame: ${lastFrameSteps}`);
+  // console.log(`Steps this frame: ${lastFrameSteps}`);
   if (settings.stepMode === "Unlimited") {
     settings._controllers.stepsController.name(`Steps / Frame: ${lastFrameSteps}`);
   }
@@ -481,13 +481,30 @@ function isMouseOverGUI() {
 
 function mousePressed() {
   if (isMouseOverGUI()) return;
-  // console.log("mousePressed", mouseButton, mouseX, mouseY);
+
   if (mouseButton === LEFT) {
     isDrawing = true;
     toggleCellUnderCursor();
   }
 
-  if (mouseButton === RIGHT || mouseButton === CENTER) {
+  if (mouseButton === RIGHT) {
+    if (keyIsDown(SHIFT)) {
+      // Optional: Shift+RightClick could pan if you want both features
+      isPanning = true;
+      lastMouseX = mouseX;
+      lastMouseY = mouseY;
+    } else {
+      // Spawn a new turmite at mouse position
+      const worldX = Math.floor((mouseX - offsetX) / (cellSize * zoom));
+      const worldY = Math.floor((mouseY - offsetY) / (cellSize * zoom));
+
+      if (worldX >= 0 && worldX < COLS && worldY >= 0 && worldY < ROWS) {
+        turmites.push(new Turmite(worldX, worldY));
+      }
+    }
+  }
+
+  if (mouseButton === CENTER) {
     isPanning = true;
     lastMouseX = mouseX;
     lastMouseY = mouseY;
