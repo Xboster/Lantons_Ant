@@ -21,6 +21,7 @@ const settings = {
   get stepsDisplay() { return this.stepsPerFrame; },
   clear: () => resetWorld()
 };
+let antFolder = null;
 let lastFrameSteps = 0;
 
 const stateColors = [
@@ -127,26 +128,20 @@ class Chunk {
 }
 
 class Turmite {
-  constructor(x, y, rule = "RL", numStates = 2) {
+  constructor(x, y, rule = "RL") {
     this.x = x;
     this.y = y;
     this.dir = 0;
-    this.rule = rule;       // string of 'L'/'R' per state
-    this.numStates = numStates;
+    this.rule = rule;  // string of L/R for each state
   }
 
   // Sequential step
   step(grid) {
     const idx = this.x + this.y * COLS;
     const cell = grid[idx];
-
-    // Determine turn from rule
-    const turnChar = this.rule[cell % this.rule.length];
-    const turn = turnChar === 'L' ? -1 : 1;
+    const turn = this.rule[cell % this.rule.length] === 'L' ? -1 : 1;
     this.dir = (this.dir + turn + 4) % 4;
-
-    // Cycle cell state
-    grid[idx] = (cell + 1) % this.numStates;
+    grid[idx] = (cell + 1) % this.rule.length;
 
     markChunkDirty(this.x, this.y);
 
@@ -168,10 +163,7 @@ class Turmite {
   prepareStep() {
     const idx = this.x + this.y * COLS;
     const cell = grid[idx];
-
-    const turnChar = this.rule[cell % this.rule.length];
-    const turn = turnChar === 'L' ? -1 : 1;
-    const newDir = (this.dir + turn + 4) % 4;
+    const newDir = (this.dir + (this.rule[cell % this.rule.length] === 'L' ? -1 : 1) + 4) % 4;
 
     let nx = this.x, ny = this.y;
     switch (newDir) {
@@ -186,14 +178,13 @@ class Turmite {
       newPos: { x: nx, y: ny },
       newDir,
       flipIdx: idx,
-      oldCell: cell,
-      numStates: this.numStates
+      oldCell: cell
     };
   }
 
   // Apply prepared step
   applyStep(step) {
-    grid[step.flipIdx] = (step.oldCell + 1) % step.numStates;
+    grid[step.flipIdx] = (step.oldCell + 1) % this.rule.length;
     markChunkDirty(step.oldPos.x, step.oldPos.y);
     markChunkDirty(step.newPos.x, step.newPos.y);
     this.x = step.newPos.x;
@@ -237,18 +228,63 @@ function initTurmites(n) {
   for (let i = 0; i < n; i++) {
     const x = Math.floor(COLS / 2);
     const y = Math.floor(ROWS / 2);
-
-    // Pass custom rule and number of states
-    const rule = "RRLLLRLLLRRR";  // replace with any LR string
-    const numStates = rule.length;
-    turmites.push(new Turmite(x, y, rule, numStates));
+    const rule = "RRLLLRLLLRRR"; // any L/R string
+    turmites.push(new Turmite(x, y, rule));
   }
+  refreshAntFolder(); // refresh folder after creating ants
 }
 
 function resetWorld() {
   grid.fill(0);
   chunks.forEach(row => row.forEach(ch => ch.dirty = true));
 }
+
+function refreshAntFolder() {
+  if (!gui) return;
+
+  // If antFolder doesn't exist yet, create it
+  if (!antFolder) {
+    antFolder = gui.addFolder("Ants");
+    antFolder.open();
+  }
+
+  // Add only new ants
+  turmites.forEach((ant, i) => {
+    // Check if this ant already has a folder
+    if (!ant._guiFolder) {
+      const f = antFolder.addFolder(`Ant ${i}`);
+      f.add(ant, 'x').listen();
+      f.add(ant, 'y').listen();
+      f.add(ant, 'dir').listen();
+      f.add(ant, 'rule');
+
+      // Add Delete button
+      f.add({
+        delete: () => {
+          // Remove from turmites array
+          turmites = turmites.filter(a => a !== ant);
+
+          // Destroy folder in GUI
+          if (ant._guiFolder) {
+            ant._guiFolder.destroy();
+            delete ant._guiFolder;
+          }
+
+          // Optional: re-label remaining ants
+          turmites.forEach((a, idx) => {
+            if (a._guiFolder) a._guiFolder.title = `Ant ${idx}`;
+          });
+        }
+      }, 'delete').name('Delete Ant');
+
+      f.open();
+
+      // Store reference so we don't duplicate it
+      ant._guiFolder = f;
+    }
+  });
+}
+
 
 function initUI() {
   gui = new lil.GUI({ title: 'Langton Ant Controls' });
@@ -371,6 +407,11 @@ function initUI() {
       offsetX -= (canvasCenterX - offsetX) * (zoom / oldZoom - 1);
       offsetY -= (canvasCenterY - offsetY) * (zoom / oldZoom - 1);
     });
+
+  // --- Ant folder ---
+  antFolder = gui.addFolder('Ants');
+  refreshAntFolder(); // populate folder with existing ants
+  antFolder.open();
 
   // --- GUI style ---
   gui.domElement.style.position = 'absolute';
@@ -513,22 +554,16 @@ function mousePressed() {
     toggleCellUnderCursor();
   }
 
-  if (mouseButton === RIGHT) {
-    if (keyIsDown(SHIFT)) {
-      // Optional: Shift+RightClick could pan if you want both features
-      isPanning = true;
-      lastMouseX = mouseX;
-      lastMouseY = mouseY;
-    } else {
-      // Spawn a new turmite at mouse position
-      const worldX = Math.floor((mouseX - offsetX) / (cellSize * zoom));
-      const worldY = Math.floor((mouseY - offsetY) / (cellSize * zoom));
+  if (mouseButton === RIGHT && !keyIsDown(SHIFT)) {
+    const worldX = Math.floor((mouseX - offsetX) / (cellSize * zoom));
+    const worldY = Math.floor((mouseY - offsetY) / (cellSize * zoom));
 
-      if (worldX >= 0 && worldX < COLS && worldY >= 0 && worldY < ROWS) {
-        turmites.push(new Turmite(worldX, worldY));
-      }
+    if (worldX >= 0 && worldX < COLS && worldY >= 0 && worldY < ROWS) {
+      turmites.push(new Turmite(worldX, worldY));
+      refreshAntFolder(); // update GUI dynamically
     }
   }
+
 
   if (mouseButton === CENTER) {
     isPanning = true;
