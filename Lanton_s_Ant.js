@@ -1,5 +1,5 @@
-const COLS = 2048;
-const ROWS = 2048;
+const COLS = 8192;
+const ROWS = 8192;
 const cellSize = 16;
 let zoom = 0.2;
 const minZoom = 0.001, maxZoom = 1;
@@ -22,6 +22,14 @@ const settings = {
   clear: () => resetWorld()
 };
 let lastFrameSteps = 0;
+
+const stateColors = [
+  [255, 255, 255],   // state 0: white
+  [255, 0, 0],       // state 1: red
+  [0, 255, 0],       // state 2: green
+  [0, 0, 255],       // state 3: blue
+  // Add more colors if needed
+];
 
 class Chunk {
   constructor(cx, cy, size) {
@@ -61,13 +69,15 @@ class Chunk {
         for (let i = 0; i < this.width; i++) {
           const gx = this.x + i;
           const gy = this.y + j;
-          const col = (gx < COLS && gy < ROWS && grid[gx + gy * COLS]) ? 0 : 255;
+          const cellState = (gx < COLS && gy < ROWS) ? grid[gx + gy * COLS] : 0;
+          const colRGB = stateColors[cellState % stateColors.length];
 
           const pxIndex = 4 * (j * this.width + i);
-          this.gfx.pixels[pxIndex] = col;
-          this.gfx.pixels[pxIndex + 1] = col;
-          this.gfx.pixels[pxIndex + 2] = col;
+          this.gfx.pixels[pxIndex] = colRGB[0];
+          this.gfx.pixels[pxIndex + 1] = colRGB[1];
+          this.gfx.pixels[pxIndex + 2] = colRGB[2];
           this.gfx.pixels[pxIndex + 3] = 255;
+
         }
       }
       this.gfx.updatePixels();
@@ -85,11 +95,13 @@ class Chunk {
       const gx = this.x + localX;
       const gy = this.y + localY;
 
-      const col = (gx < COLS && gy < ROWS && grid[gx + gy * COLS]) ? 0 : 255;
+      const cellState = (gx < COLS && gy < ROWS) ? grid[gx + gy * COLS] : 0;
+      const colRGB = stateColors[cellState % stateColors.length];
+
       const pxIndex = 4 * (localY * this.width + localX);
-      this.gfx.pixels[pxIndex] = col;
-      this.gfx.pixels[pxIndex + 1] = col;
-      this.gfx.pixels[pxIndex + 2] = col;
+      this.gfx.pixels[pxIndex] = colRGB[0];
+      this.gfx.pixels[pxIndex + 1] = colRGB[1];
+      this.gfx.pixels[pxIndex + 2] = colRGB[2];
       this.gfx.pixels[pxIndex + 3] = 255;
     }
     this.gfx.updatePixels();
@@ -115,19 +127,26 @@ class Chunk {
 }
 
 class Turmite {
-  constructor(x, y) {
+  constructor(x, y, rule = "RL", numStates = 2) {
     this.x = x;
     this.y = y;
     this.dir = 0;
+    this.rule = rule;       // string of 'L'/'R' per state
+    this.numStates = numStates;
   }
 
   // Sequential step
   step(grid) {
     const idx = this.x + this.y * COLS;
     const cell = grid[idx];
-    const turn = cell ? -1 : 1;
+
+    // Determine turn from rule
+    const turnChar = this.rule[cell % this.rule.length];
+    const turn = turnChar === 'L' ? -1 : 1;
     this.dir = (this.dir + turn + 4) % 4;
-    grid[idx] = 1 - cell;
+
+    // Cycle cell state
+    grid[idx] = (cell + 1) % this.numStates;
 
     markChunkDirty(this.x, this.y);
 
@@ -149,7 +168,9 @@ class Turmite {
   prepareStep() {
     const idx = this.x + this.y * COLS;
     const cell = grid[idx];
-    const turn = cell ? -1 : 1;
+
+    const turnChar = this.rule[cell % this.rule.length];
+    const turn = turnChar === 'L' ? -1 : 1;
     const newDir = (this.dir + turn + 4) % 4;
 
     let nx = this.x, ny = this.y;
@@ -165,13 +186,14 @@ class Turmite {
       newPos: { x: nx, y: ny },
       newDir,
       flipIdx: idx,
-      oldCell: cell
+      oldCell: cell,
+      numStates: this.numStates
     };
   }
 
   // Apply prepared step
   applyStep(step) {
-    grid[step.flipIdx] = 1 - step.oldCell;
+    grid[step.flipIdx] = (step.oldCell + 1) % step.numStates;
     markChunkDirty(step.oldPos.x, step.oldPos.y);
     markChunkDirty(step.newPos.x, step.newPos.y);
     this.x = step.newPos.x;
@@ -215,7 +237,11 @@ function initTurmites(n) {
   for (let i = 0; i < n; i++) {
     const x = Math.floor(COLS / 2);
     const y = Math.floor(ROWS / 2);
-    turmites.push(new Turmite(x, y));
+
+    // Pass custom rule and number of states
+    const rule = "RRLLLRLLLRRR";  // replace with any LR string
+    const numStates = rule.length;
+    turmites.push(new Turmite(x, y, rule, numStates));
   }
 }
 
