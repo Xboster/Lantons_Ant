@@ -12,6 +12,8 @@ let offsetX = 0, offsetY = 0;
 let lastCellX = null, lastCellY = null, isDrawing = false;
 let isPanning = false, lastMouseX = 0, lastMouseY = 0;
 let turmites = [];
+let followedAnt = null;
+
 let gui;
 const settings = {
   running: false,
@@ -248,29 +250,55 @@ function refreshAntFolder() {
     antFolder.open();
   }
 
-  // Add only new ants
   turmites.forEach((ant, i) => {
-    // Check if this ant already has a folder
     if (!ant._guiFolder) {
       const f = antFolder.addFolder(`Ant ${i}`);
-      f.add(ant, 'x').listen();
-      f.add(ant, 'y').listen();
-      f.add(ant, 'dir').listen();
-      f.add(ant, 'rule');
 
-      // Add Delete button
+      // Rule text field
+      const ruleController = f.add(ant, 'rule').name('Rule').onChange(val => {
+        ant.rule = val.toUpperCase().replace(/[^LR]/g, '');
+      });
+
+      // Randomize Rule button
+      f.add({
+        randomizeRule: () => {
+          const len = ant.rule.length || 2; // fallback length
+          let newRule = '';
+          for (let j = 0; j < len; j++) {
+            newRule += Math.random() < 0.5 ? 'L' : 'R';
+          }
+          ant.rule = newRule;
+
+          // Update the GUI display explicitly
+          ruleController.updateDisplay();
+        }
+      }, 'randomizeRule').name('Randomize Rule');
+
+      // Follow toggle
+      ant.follow = false; // default
+      f.add(ant, 'follow').name('Follow Ant').onChange(val => {
+        if (val) {
+          turmites.forEach(a => {
+            if (a !== ant) a.follow = false;
+          });
+          followedAnt = ant;
+        } else if (followedAnt === ant) {
+          followedAnt = null;
+        }
+        updateCameraFollow();
+      });
+
+      // Delete button
       f.add({
         delete: () => {
-          // Remove from turmites array
           turmites = turmites.filter(a => a !== ant);
-
-          // Destroy folder in GUI
           if (ant._guiFolder) {
             ant._guiFolder.destroy();
             delete ant._guiFolder;
           }
 
-          // Optional: re-label remaining ants
+          if (followedAnt === ant) followedAnt = null;
+
           turmites.forEach((a, idx) => {
             if (a._guiFolder) a._guiFolder.title = `Ant ${idx}`;
           });
@@ -278,13 +306,18 @@ function refreshAntFolder() {
       }, 'delete').name('Delete Ant');
 
       f.open();
-
-      // Store reference so we don't duplicate it
       ant._guiFolder = f;
     }
   });
 }
 
+// In draw(), after updating turmites:
+function updateCameraFollow() {
+  if (followedAnt) {
+    offsetX = width / 2 - followedAnt.x * cellSize * zoom;
+    offsetY = height / 2 - followedAnt.y * cellSize * zoom;
+  }
+}
 
 function initUI() {
   gui = new lil.GUI({ title: 'Langton Ant Controls' });
@@ -479,6 +512,7 @@ function draw() {
   // Draw turmites
   drawTurmites();
   drawBorder();
+  updateCameraFollow();
 
   // Print steps processed for benchmarking
   // console.log(`Steps this frame: ${lastFrameSteps}`);
