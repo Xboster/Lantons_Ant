@@ -217,7 +217,7 @@ function setup() {
     chunks.push(row);
   }
 
-  initTurmites(1);
+  initTurmites(3);
   initUI();
 
   offsetX = -(COLS * cellSize * zoom) / 2 + width / 2;
@@ -241,15 +241,59 @@ function resetWorld() {
   chunks.forEach(row => row.forEach(ch => ch.dirty = true));
 }
 
+let randomizeAllController = null;
+let deleteAllController = null;
+let clearGridOnRandomize = false;
+
 function refreshAntFolder() {
   if (!gui) return;
 
-  // If antFolder doesn't exist yet, create it
+  // --- Individual ant folders ---
   if (!antFolder) {
     antFolder = gui.addFolder("Ants");
     antFolder.open();
   }
+  // Add "Clear grid on randomize" toggle only once
+  if (!settings._clearOnRandomizeController) {
+    settings._clearOnRandomizeController = antFolder
+      .add({ clear: clearGridOnRandomize }, 'clear')
+      .name('Clear Grid On Randomize')
+      .onChange(v => clearGridOnRandomize = v);
+  }
+  // Add "Randomize All" button only once
+  if (!randomizeAllController) {
+    randomizeAllController = antFolder.add({
+      randomizeAll: () => {
+        if (clearGridOnRandomize) resetWorld();
 
+        turmites.forEach(ant => {
+          const len = ant.rule.length || 2;
+          let newRule = '';
+          for (let j = 0; j < len; j++) newRule += Math.random() < 0.5 ? 'L' : 'R';
+          ant.rule = newRule;
+          if (ant._ruleController) ant._ruleController.updateDisplay();
+        });
+      }
+    }, 'randomizeAll').name('Randomize All Rules');
+  }
+
+  // Add "Delete All" button only once
+  if (!deleteAllController) {
+    deleteAllController = antFolder.add({
+      deleteAll: () => {
+        turmites.forEach(ant => {
+          if (ant._guiFolder) {
+            ant._guiFolder.destroy();
+            delete ant._guiFolder;
+          }
+        });
+        turmites = [];
+        followedAnt = null;
+      }
+    }, 'deleteAll').name('Delete All Ants');
+  }
+
+  // --- Individual ants ---
   turmites.forEach((ant, i) => {
     if (!ant._guiFolder) {
       const f = antFolder.addFolder(`Ant ${i}`);
@@ -258,37 +302,40 @@ function refreshAntFolder() {
       const ruleController = f.add(ant, 'rule').name('Rule').onChange(val => {
         ant.rule = val.toUpperCase().replace(/[^LR]/g, '');
       });
+      ant._ruleController = ruleController;
 
-      // Randomize Rule button
+      // Randomize rule button
       f.add({
         randomizeRule: () => {
-          const len = ant.rule.length || 2; // fallback length
+          const len = ant.rule.length || 2;
           let newRule = '';
-          for (let j = 0; j < len; j++) {
-            newRule += Math.random() < 0.5 ? 'L' : 'R';
-          }
+          for (let j = 0; j < len; j++) newRule += Math.random() < 0.5 ? 'L' : 'R';
           ant.rule = newRule;
-
-          // Update the GUI display explicitly
           ruleController.updateDisplay();
         }
       }, 'randomizeRule').name('Randomize Rule');
 
       // Follow toggle
-      ant.follow = false; // default
-      f.add(ant, 'follow').name('Follow Ant').onChange(val => {
+      ant.follow = false;
+      const followController = f.add(ant, 'follow').name('Follow Ant').onChange(val => {
         if (val) {
+          // Disable follow for all other ants
           turmites.forEach(a => {
-            if (a !== ant) a.follow = false;
+            if (a !== ant && a.follow) {
+              a.follow = false;
+              if (a._followController) a._followController.updateDisplay();
+            }
           });
           followedAnt = ant;
         } else if (followedAnt === ant) {
           followedAnt = null;
         }
-        updateCameraFollow();
       });
 
-      // Delete button
+      // store controller so we can update later
+      ant._followController = followController;
+
+      // Delete ant button
       f.add({
         delete: () => {
           turmites = turmites.filter(a => a !== ant);
@@ -296,9 +343,9 @@ function refreshAntFolder() {
             ant._guiFolder.destroy();
             delete ant._guiFolder;
           }
-
           if (followedAnt === ant) followedAnt = null;
 
+          // Re-label remaining ants
           turmites.forEach((a, idx) => {
             if (a._guiFolder) a._guiFolder.title = `Ant ${idx}`;
           });
