@@ -1,5 +1,5 @@
-const COLS = 8192;
-const ROWS = 8192;
+const COLS = 4096;
+const ROWS = 4096;
 const cellSize = 16;
 let zoom = 0.2;
 const minZoom = 0.001, maxZoom = 1;
@@ -28,10 +28,11 @@ let lastFrameSteps = 0;
 
 const stateColors = [
   [255, 255, 255],   // state 0: white
-  [255, 0, 0],       // state 1: red
-  [0, 255, 0],       // state 2: green
-  [0, 0, 255],       // state 3: blue
-  // Add more colors if needed
+  [0, 0, 0],         // state 1: black
+  [255, 0, 0],       // state 2: red
+  [0, 255, 0],       // state 3: green
+  [0, 0, 255],       // state 4: blue
+
 ];
 
 class Chunk {
@@ -111,11 +112,12 @@ class Chunk {
     this.dirtyCells.clear();
   }
 
-  draw() {
-    const px = Math.round(this.x * cellSize * zoom + offsetX);
-    const py = Math.round(this.y * cellSize * zoom + offsetY);
-    const w = Math.ceil(this.width * cellSize * zoom);
-    const h = Math.ceil(this.height * cellSize * zoom);
+  draw(s, offsetX, offsetY) {
+    imageMode(CORNER);      // ensures top-left alignment
+    const px = this.x * s + offsetX;
+    const py = this.y * s + offsetY;
+    const w = this.width * s;
+    const h = this.height * s;
 
     if (px + w < 0 || px > width || py + h < 0 || py > height) return;
 
@@ -130,7 +132,7 @@ class Chunk {
 }
 
 class Turmite {
-  constructor(x, y, rule = "RL") {
+  constructor(x, y, rule = "LR") {
     this.x = x;
     this.y = y;
     this.dir = 0;
@@ -196,28 +198,31 @@ class Turmite {
 }
 
 function setup() {
-  createCanvas(windowWidth, windowHeight);
+  p5.disableFriendlyErrors = true;
+
+  createCanvas(windowWidth, windowHeight).canvas.oncontextmenu = () => false;
+
   noSmooth();
   setAttributes({ antialias: false });
-  pixelDensity(1);
-  document.body.style.margin = 0;
+  pixelDensity(2);
+
+  document.body.style.margin = "0";
   document.body.style.overflow = "hidden";
-  canvas.oncontextmenu = () => false;
 
   grid = new Uint8Array(COLS * ROWS);
 
   numChunksX = Math.ceil(COLS / chunkSize);
   numChunksY = Math.ceil(ROWS / chunkSize);
 
+  chunks = new Array(numChunksX);
   for (let cx = 0; cx < numChunksX; cx++) {
-    const row = [];
+    chunks[cx] = new Array(numChunksY);
     for (let cy = 0; cy < numChunksY; cy++) {
-      row.push(new Chunk(cx, cy, chunkSize));
+      chunks[cx][cy] = new Chunk(cx, cy, chunkSize);
     }
-    chunks.push(row);
   }
 
-  initTurmites(3);
+  initTurmites(1);
   initUI();
 
   offsetX = -(COLS * cellSize * zoom) / 2 + width / 2;
@@ -230,8 +235,8 @@ function initTurmites(n) {
   for (let i = 0; i < n; i++) {
     const x = Math.floor(COLS / 2);
     const y = Math.floor(ROWS / 2);
-    const rule = "RRLLLRLLLRRR"; // any L/R string
-    turmites.push(new Turmite(x, y, rule));
+    // const rule = "RRLLLRLLLRRR"; // any L/R string
+    turmites.push(new Turmite(x, y));
   }
   refreshAntFolder(); // refresh folder after creating ants
 }
@@ -330,6 +335,7 @@ function refreshAntFolder() {
         } else if (followedAnt === ant) {
           followedAnt = null;
         }
+        updateCameraFollow();
       });
 
       // store controller so we can update later
@@ -358,12 +364,15 @@ function refreshAntFolder() {
   });
 }
 
-// In draw(), after updating turmites:
 function updateCameraFollow() {
-  if (followedAnt) {
-    offsetX = width / 2 - followedAnt.x * cellSize * zoom;
-    offsetY = height / 2 - followedAnt.y * cellSize * zoom;
-  }
+  if (!followedAnt) return;
+
+  const targetX = width / 2 - followedAnt.x * cellSize * zoom;
+  const targetY = height / 2 - followedAnt.y * cellSize * zoom;
+
+  const smoothingSpeed = 0.2; // fraction of remaining distance per frame
+  offsetX += (targetX - offsetX) * smoothingSpeed;
+  offsetY += (targetY - offsetY) * smoothingSpeed;
 }
 
 function initUI() {
@@ -373,14 +382,14 @@ function initUI() {
   const runningController = gui.add(settings, 'running').name('Running');
 
   // --- Step mode dropdown ---
-  settings.stepMode = 'Fixed';
-  const stepModeController = gui.add(settings, 'stepMode', ['Fixed', 'Exponential', 'Unlimited'])
+  settings.stepMode = 'Linear';
+  const stepModeController = gui.add(settings, 'stepMode', ['Linear', 'Exponential', 'Unlimited'])
     .name('Step Mode')
     .onChange(updateStepsController);
 
   // --- Steps per frame slider ---
   settings._stepsSliderValue = 0; // 2^0 = 1 step
-  const stepsController = gui.add(settings, '_stepsSliderValue', 0, 20, 1)
+  const stepsController = gui.add(settings, '_stepsSliderValue', 0, 21, 1)
     .name('Steps / Frame')
     .onChange(updateStepsPerFrame);
 
@@ -404,19 +413,19 @@ function initUI() {
       }
 
       // Redraw chunks and turmites immediately
-      drawChunks();
-      drawTurmites();
-      drawBorder();
+      drawChunks(s, renderOffsetX, renderOffsetY);
+      drawTurmites(s, renderOffsetX, renderOffsetY);
+      drawBorder(s, renderOffsetX, renderOffsetY);
     }
   }, 'stepOnce').name('Step Once');
 
   function updateStepsController() {
-    if (settings.stepMode === 'Fixed') {
+    if (settings.stepMode === 'Linear') {
       stepsController.enable();
       stepOnceController.enable();
 
       stepsController.min(1);
-      stepsController.max(1000000);
+      stepsController.max(2000000);
       stepsController.step(1);
 
       const clamped = Math.max(1, Math.round(stepsController.getValue()));
@@ -428,7 +437,7 @@ function initUI() {
       stepOnceController.enable();
 
       stepsController.min(0);
-      stepsController.max(20);
+      stepsController.max(21);
       stepsController.step(1);
 
       // Convert previous value to nearest power-of-two exponent
@@ -507,17 +516,25 @@ function initUI() {
 function draw() {
   background(30);
 
+  // --- Continuous render scale for smooth zoom ---
+  const s = cellSize * zoom;
+
+  // --- Keep camera offsets continuous for smooth panning/zoom ---
+  const renderOffsetX = offsetX;
+  const renderOffsetY = offsetY;
+
   // When paused, just draw everything
   if (!settings.running) {
-    drawChunks();
-    drawTurmites();
-    drawBorder();
+    drawChunks(s, renderOffsetX, renderOffsetY);
+    drawTurmites(s, renderOffsetX, renderOffsetY);
+    drawBorder(s, renderOffsetX, renderOffsetY);
+    updateCameraFollow();
     pendingSteps = 0;
     lastFrameSteps = 0;
     return;
   }
 
-  // Accumulate steps
+  // --- Accumulate steps ---
   pendingSteps += settings.stepsPerFrame;
 
   const startTime = performance.now();
@@ -549,20 +566,20 @@ function draw() {
 
   lastFrameSteps = stepsProcessed;
 
-  // --- Draw chunks with dynamic LOD ---
-  for (let cx = 0; cx < numChunksX; cx++) {
-    for (let cy = 0; cy < numChunksY; cy++) {
-      chunks[cx][cy].draw();
-    }
-  }
+  // --- Draw chunks ---
+  drawChunks(s, renderOffsetX, renderOffsetY);
 
-  // Draw turmites
-  drawTurmites();
-  drawBorder();
+
+  // --- Draw turmites ---
+  drawTurmites(s, renderOffsetX, renderOffsetY);
+
+  // --- Draw grid border ---
+  drawBorder(s, renderOffsetX, renderOffsetY);
+
+  // --- Update camera follow for selected turmite ---
   updateCameraFollow();
 
-  // Print steps processed for benchmarking
-  // console.log(`Steps this frame: ${lastFrameSteps}`);
+  // --- Update step counter in GUI if in Unlimited mode ---
   if (settings.stepMode === "Unlimited") {
     settings._controllers.stepsController.name(`Steps / Frame: ${lastFrameSteps}`);
   }
@@ -574,35 +591,39 @@ function markChunkDirty(gx, gy) {
   if (chunks[cx] && chunks[cx][cy]) chunks[cx][cy].markDirty(gx, gy);
 }
 
-function drawChunks() {
+function drawChunks(s, offsetX, offsetY) {
   for (let cx = 0; cx < numChunksX; cx++) {
     for (let cy = 0; cy < numChunksY; cy++) {
-      chunks[cx][cy].draw();
+      chunks[cx][cy].draw(s, offsetX, offsetY);
     }
   }
 }
 
-function drawTurmites() {
-  // Only skip drawing turmites when running and zoomed way out
-  if (settings.running && cellSize * zoom < 2) return;
+function drawTurmites(s, offsetX, offsetY) {
+  if (settings.running && s < 2) return;
 
-  push();
-  translate(offsetX, offsetY);
-  scale(cellSize * zoom);
   noStroke();
   fill(255, 0, 0);
-  turmites.forEach(t => rect(t.x, t.y, 1, 1));
-  pop();
+  rectMode(CORNER);
+  noSmooth();
+
+  for (let t of turmites) {
+    rect(t.x * s + offsetX, t.y * s + offsetY, s, s);
+  }
 }
 
-function drawBorder() {
+function drawBorder(s, offsetX, offsetY) {
   push();
-  translate(offsetX, offsetY);
-  scale(cellSize * zoom);
-  stroke(255, 150);
-  strokeWeight(1 / (cellSize * zoom));
+  noSmooth();
   noFill();
-  rect(0, 0, COLS, ROWS);
+  stroke(255, 150);
+
+  // Clamp stroke weight between 0.5 and 1 pixel
+  const sw = constrain(1 / s, 0.5, 1);
+  strokeWeight(sw);
+
+  rectMode(CORNER);
+  rect(offsetX, offsetY, COLS * s, ROWS * s);
   pop();
 }
 
@@ -751,6 +772,9 @@ function toggleCellUnderCursor() {
 function keyPressed() {
   if (key === " ") {
     settings.running = !settings.running;
+    settings._controllers?.runningController.updateDisplay();
+  } else if (keyCode === ESCAPE) {
+    settings.running = false;
     settings._controllers?.runningController.updateDisplay();
   }
 }
